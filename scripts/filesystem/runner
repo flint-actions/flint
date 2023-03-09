@@ -1,0 +1,13 @@
+#!/bin/bash
+
+MMDS_IPV4_ADDR=169.254.169.254
+TOKEN=$(curl -X PUT "http://${MMDS_IPV4_ADDR}/latest/api/token" \
+      -H "X-metadata-token-ttl-seconds: 21600")
+
+RESOURCE_POINTER_OBJ=latest/meta-data/token
+GITHUB_RUNNER_TOKEN=$(curl -s "http://${MMDS_IPV4_ADDR}/${RESOURCE_POINTER_OBJ}" \
+	-H "X-metadata-token: ${TOKEN}")
+
+cd /home/runner/actions-runner || exit 1
+./config.sh --url https://github.com/myopenfactory --token "$GITHUB_RUNNER_TOKEN" --ephemeral --unattended --name "$(hostname)"
+./run.sh
