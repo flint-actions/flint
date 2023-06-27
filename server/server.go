@@ -24,6 +24,7 @@ type Server struct {
 	ipamV4 *ipam.IPAM
 	ipamV6 *ipam.IPAM
 	key    *rsa.PrivateKey
+	id     string
 
 	// guards the following two fields
 	m         sync.Mutex
@@ -41,11 +42,12 @@ type Server struct {
 	webhookSecret     string
 }
 
-func New(ipamV4 *ipam.IPAM, ipamV6 *ipam.IPAM, key *rsa.PrivateKey, filesystem, kernelImage, jailerBinary, firecrackerBinary, bridgeInterface, webhookSecret, organization string, bridgeIPv4 netip.Addr, bridgeIPv6 netip.Addr) *Server {
+func New(ipamV4 *ipam.IPAM, ipamV6 *ipam.IPAM, key *rsa.PrivateKey, id string, filesystem, kernelImage, jailerBinary, firecrackerBinary, bridgeInterface, webhookSecret, organization string, bridgeIPv4 netip.Addr, bridgeIPv6 netip.Addr) *Server {
 	return &Server{
 		ipamV4:            ipamV4,
 		ipamV6:            ipamV6,
 		key:               key,
+		id:                id,
 		filesystem:        filesystem,
 		kernelImage:       kernelImage,
 		jailerBinary:      jailerBinary,
@@ -126,7 +128,7 @@ func (s *Server) handleQueuedEvent(ctx context.Context, id int64) error {
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
 		"iat": now.Unix(),
 		"exp": now.Add(10 * time.Minute).Unix(),
-		"iss": "298250",
+		"iss": id,
 	})
 
 	tokenString, err := token.SignedString(s.key)

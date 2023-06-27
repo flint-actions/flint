@@ -81,7 +81,7 @@ Put the `private.pem` file into for e.g. `/root/flint/`
 Flint can be launched through multiple ways for example running it interactive:
 
 ```sh
-./flint --jailer=/root/flint/jailer --firecracker=/root/flint/firecracker --kernel=/root/flint/vmlinux --filesystem=/root/flint/rootfs.ext4 --privateKey=/root/flint/private.pem --webhookSecret=ABCDefgh --organization=flint-actions
+./flint --jailer=/root/flint/jailer --firecracker=/root/flint/firecracker --kernel=/root/flint/vmlinux --filesystem=/root/flint/rootfs.ext4 --privateKey=/root/flint/private.pem --webhookSecret=ABCDefgh --organization=flint-actions --appID=123456
 ```
 
 This should launch flint and wait for any event which requires a self-hosted runner. Any action which should run und Flint

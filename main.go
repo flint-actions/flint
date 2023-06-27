@@ -27,6 +27,7 @@ func execute() error {
 	filesystem := flag.String("filesystem", "", "root filesystem")
 	ipv4Pool := flag.String("ipv4Pool", "10.0.0.0/24", "ipv4 address pool to use for vms")
 	ipv6Pool := flag.String("ipv6Pool", "fd3b:5cee:6e4c:2a55::/64", "ipv6 address pool to use for vms")
+	githubAppID := flag.String("appID", "", "app id of the github app")
 	githubAppPrivateKey := flag.String("privateKey", "", "private key of registered github app")
 	githubWebhookSecret := flag.String("webhookSecret", "", "github webhook secret")
 	githubOrganization := flag.String("organization", "", "github organization")
@@ -90,7 +91,7 @@ func execute() error {
 		return fmt.Errorf("failed to parse github app client key: %w", err)
 	}
 
-	server := server.New(ipamV4, ipamV6, appKey, *filesystem, *kernelImage, *jailerBinary, *firecrackerBinary, *bridgeInterface, *githubWebhookSecret, *githubOrganization, bridgeIPv4, bridgeIPv6)
+	server := server.New(ipamV4, ipamV6, appKey, *githubAppID, *filesystem, *kernelImage, *jailerBinary, *firecrackerBinary, *bridgeInterface, *githubWebhookSecret, *githubOrganization, bridgeIPv4, bridgeIPv6)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
