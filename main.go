@@ -93,6 +93,10 @@ func execute() error {
 
 	server := server.New(ipamV4, ipamV6, appKey, *githubAppID, *filesystem, *kernelImage, *jailerBinary, *firecrackerBinary, *bridgeInterface, *githubWebhookSecret, *githubOrganization, bridgeIPv4, bridgeIPv6)
 
+	go func() {
+		log.Fatal(server.Controller(context.Background()))
+	}()
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 

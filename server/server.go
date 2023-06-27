@@ -165,6 +165,98 @@ func (s *Server) handleQueuedEvent(ctx context.Context, id int64) error {
 	return nil
 }
 
+func (s *Server) Controller(ctx context.Context) error {
+	now := time.Now()
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+		"iat": now.Unix(),
+		"exp": now.Add(10 * time.Minute).Unix(),
+		"iss": s.id,
+	})
+
+	tokenString, err := token.SignedString(s.key)
+	if err != nil {
+		return fmt.Errorf("failed to generate jwt token: %w", err)
+	}
+
+	client := github.NewTokenClient(ctx, tokenString)
+
+	installation, _, err := client.Apps.FindOrganizationInstallation(ctx, s.organization)
+	if err != nil {
+		return fmt.Errorf("failed to find installation of app for organization: %w", err)
+	}
+
+	installationToken, _, err := client.Apps.CreateInstallationToken(ctx, installation.GetID(), &github.InstallationTokenOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to retrieve installation token: %w", err)
+	}
+
+	installationClient := github.NewTokenClient(ctx, installationToken.GetToken())
+	for {
+		repositories, _, err := installationClient.Apps.ListRepos(ctx, &github.ListOptions{})
+		if err != nil {
+			log.Printf("failed to list organization repositories: %v", err)
+			continue
+		}
+		for _, repo := range repositories.Repositories {
+			owner := repo.GetOwner().GetLogin()
+			name := repo.GetName()
+			queuedWorkflows, _, err := installationClient.Actions.ListRepositoryWorkflowRuns(ctx, owner, name, &github.ListWorkflowRunsOptions{
+				Status: "queued",
+			})
+
+			if err != nil {
+				log.Printf("failed to list queued workflows for repository %s: %v", repo.GetName(), err)
+				continue
+			}
+
+			if queuedWorkflows.GetTotalCount() == 0 {
+				continue
+			}
+
+			for _, workflow := range queuedWorkflows.WorkflowRuns {
+				jobs, _, err := installationClient.Actions.ListWorkflowJobs(ctx, owner, name, workflow.GetID(), &github.ListWorkflowJobsOptions{})
+				if err != nil {
+					log.Printf("failed to retrieve jobs for worfklow %s on repository %s: %v", workflow.GetName(), workflow.GetRepository().GetName(), err)
+					continue
+				}
+
+				for _, job := range jobs.Jobs {
+					id := job.GetRunID()
+					if !jobHasLabel(job, "self-hosted") {
+						continue
+					}
+
+					if s.hasRunnerForGithubID(id) {
+						continue
+					}
+
+					if job.GetCreatedAt().Add(1 * time.Minute).After(time.Now()) {
+						// webhook maybe pending
+						continue
+					}
+
+					log.Printf("launching runner for missed event %d", id)
+					if err := s.handleQueuedEvent(ctx, id); err != nil {
+						log.Println(err)
+					}
+				}
+			}
+
+		}
+
+		time.Sleep(5 * time.Minute)
+	}
+}
+
+func jobHasLabel(job *github.WorkflowJob, label string) bool {
+	for _, l := range job.Labels {
+		if l == label {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost || !strings.HasPrefix(r.URL.Path, "/webhook") {
 		http.Error(w, "invalid request", http.StatusBadRequest)
@@ -186,21 +278,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	switch event := event.(type) {
 	case *github.WorkflowJobEvent:
-		needsSelfhosted := false
-		for _, label := range event.GetWorkflowJob().Labels {
-			if label == "self-hosted" {
-				needsSelfhosted = true
-				break
-			}
-		}
-		if event.GetAction() == "queued" && needsSelfhosted {
-			log.Printf("Received queued event with id: %d", event.GetWorkflowJob().GetRunID())
-			if err := s.handleQueuedEvent(r.Context(), event.GetWorkflowJob().GetRunID()); err != nil {
+		job := event.GetWorkflowJob()
+		if event.GetAction() == "queued" && jobHasLabel(job, "self-hosted") {
+			log.Printf("Received queued event with id: %d", job.GetRunID())
+			if err := s.handleQueuedEvent(r.Context(), job.GetRunID()); err != nil {
 				log.Println(err)
 				http.Error(w, "internal server error", http.StatusInternalServerError)
 			}
 		}
-		if event.GetAction() == "completed" && needsSelfhosted {
+		if event.GetAction() == "completed" && jobHasLabel(job, "self-hosted") {
 			log.Printf("received shutdown event")
 
 			runID := event.GetWorkflowJob().GetRunID()
