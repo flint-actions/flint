@@ -128,7 +128,7 @@ func (s *Server) handleQueuedEvent(ctx context.Context, id int64) error {
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
 		"iat": now.Unix(),
 		"exp": now.Add(10 * time.Minute).Unix(),
-		"iss": id,
+		"iss": s.id,
 	})
 
 	tokenString, err := token.SignedString(s.key)
