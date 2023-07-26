@@ -192,6 +192,7 @@ func (s *Server) Controller(ctx context.Context) error {
 
 	installationClient := github.NewTokenClient(ctx, installationToken.GetToken())
 	for {
+		time.Sleep(5 * time.Minute)
 		repositories, _, err := installationClient.Apps.ListRepos(ctx, &github.ListOptions{})
 		if err != nil {
 			log.Printf("failed to list organization repositories: %v", err)
@@ -243,8 +244,6 @@ func (s *Server) Controller(ctx context.Context) error {
 			}
 
 		}
-
-		time.Sleep(5 * time.Minute)
 	}
 }
 
