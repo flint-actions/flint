@@ -1,6 +1,6 @@
 module github.com/tobiaskohlbau/flint
 
-go 1.19
+go 1.21
 
 require (
 	github.com/firecracker-microvm/firecracker-go-sdk v1.0.0

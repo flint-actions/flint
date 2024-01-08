@@ -6,7 +6,9 @@ package runner
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
+	"log/slog"
 	"math/rand"
 	"net/netip"
 	"os"
@@ -35,10 +37,45 @@ type Runner struct {
 	firecrackerBinary string
 	jailerBinary      string
 
-	logger *logrus.Logger
+	logrus *logrus.Logger
 }
 
-func New(githubID int64, bridgeInterface string, ipv4 netip.Addr, ipv6 netip.Addr, kernel, filesystem, jailerBinary, firecrackerBinary string) (*Runner, error) {
+type wrappingHook struct {
+	logger *slog.Logger
+}
+
+func (h *wrappingHook) Levels() []logrus.Level {
+	return []logrus.Level{logrus.PanicLevel, logrus.FatalLevel, logrus.ErrorLevel, logrus.WarnLevel, logrus.InfoLevel, logrus.DebugLevel, logrus.TraceLevel}
+}
+
+func (h *wrappingHook) Fire(entry *logrus.Entry) error {
+	var level slog.Level
+	switch entry.Level {
+	case logrus.PanicLevel:
+		level = slog.LevelError
+	case logrus.FatalLevel:
+		level = slog.LevelError
+	case logrus.ErrorLevel:
+		level = slog.LevelError
+	case logrus.WarnLevel:
+		level = slog.LevelWarn
+	case logrus.InfoLevel:
+		level = slog.LevelInfo
+	case logrus.DebugLevel:
+		level = slog.LevelDebug
+	case logrus.TraceLevel:
+		level = slog.LevelDebug
+	}
+
+	attributes := make([]slog.Attr, 0)
+	for key, value := range entry.Data {
+		attributes = append(attributes, slog.Any(key, value))
+	}
+	slog.LogAttrs(context.Background(), level, entry.Message, attributes...)
+	return nil
+}
+
+func New(logger *slog.Logger, githubID int64, bridgeInterface string, ipv4 netip.Addr, ipv6 netip.Addr, kernel, filesystem, jailerBinary, firecrackerBinary string) (*Runner, error) {
 	id := generateID()
 
 	macBuffer := make([]byte, 6)
@@ -66,8 +103,13 @@ func New(githubID int64, bridgeInterface string, ipv4 netip.Addr, ipv6 netip.Add
 		jailerBinary:      jailerBinary,
 		firecrackerBinary: firecrackerBinary,
 
-		logger: logrus.New(),
+		logrus: &logrus.Logger{
+			Out:   io.Discard,
+			Level: logrus.DebugLevel,
+			Hooks: make(logrus.LevelHooks),
+		},
 	}
+	r.logrus.Hooks.Add(&wrappingHook{logger: logger})
 	return r, nil
 }
 
@@ -157,7 +199,7 @@ func (r *Runner) Start(ctx context.Context, token string, bridgeIPV4 netip.Addr,
 		cfg.JailerCfg.Stdin = os.Stdin
 	}
 
-	m, err := firecracker.NewMachine(ctx, *cfg, firecracker.WithLogger(logrus.NewEntry(r.logger)))
+	m, err := firecracker.NewMachine(ctx, *cfg, firecracker.WithLogger(logrus.NewEntry(r.logrus)))
 	if err != nil {
 		if err := r.destroyInterface(ctx); err != nil {
 			return fmt.Errorf("failed to destroy interface: %w", err)

@@ -9,7 +9,7 @@ import (
 	"encoding/pem"
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -20,7 +20,7 @@ import (
 	"github.com/tobiaskohlbau/flint/server"
 )
 
-func execute() error {
+func execute(logger *slog.Logger) error {
 	jailerBinary := flag.String("jailer", "", "path to jailer binary")
 	firecrackerBinary := flag.String("firecracker", "", "path to firecracker binary")
 	kernelImage := flag.String("kernel", "", "linux kernel image (vmlinux)")
@@ -53,7 +53,7 @@ func execute() error {
 	bridgeIPv6 := ipamV6.Allocate()
 
 	if *interactive {
-		runner, err := runner.New(1, *bridgeInterface, ipamV4.Allocate(), ipamV6.Allocate(), *kernelImage, *filesystem, *jailerBinary, *firecrackerBinary)
+		runner, err := runner.New(logger, 1, *bridgeInterface, ipamV4.Allocate(), ipamV6.Allocate(), *kernelImage, *filesystem, *jailerBinary, *firecrackerBinary)
 		if err != nil {
 			return fmt.Errorf("failed to create runner interactive: %w", err)
 		}
@@ -64,13 +64,13 @@ func execute() error {
 		go func() {
 			err = runner.Start(ctx, "", bridgeIPv4, bridgeIPv6, *interactive)
 			if err != nil {
-				log.Println(err)
+				logger.Error("failed to start interactive runner", "error", err)
 				stop()
 			}
 		}()
 
 		<-ctx.Done()
-		fmt.Println("shutting down")
+		logger.Info("shutting down")
 
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -91,21 +91,23 @@ func execute() error {
 		return fmt.Errorf("failed to parse github app client key: %w", err)
 	}
 
-	server := server.New(ipamV4, ipamV6, appKey, *githubAppID, *filesystem, *kernelImage, *jailerBinary, *firecrackerBinary, *bridgeInterface, *githubWebhookSecret, *githubOrganization, bridgeIPv4, bridgeIPv6)
+	server := server.New(logger, ipamV4, ipamV6, appKey, *githubAppID, *filesystem, *kernelImage, *jailerBinary, *firecrackerBinary, *bridgeInterface, *githubWebhookSecret, *githubOrganization, bridgeIPv4, bridgeIPv6)
 
 	go func() {
-		log.Fatal(server.Controller(context.Background()))
+		logger.Error("failed to run controller", "error", server.Controller(context.Background()))
+		os.Exit(-1)
 	}()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
 	go func() {
-		log.Fatal(http.ListenAndServe(*address, server))
+		logger.Error("failed to listen", "error", http.ListenAndServe(*address, server))
+		os.Exit(-1)
 	}()
 
 	<-ctx.Done()
-	fmt.Println("shutting down")
+	logger.Info("shutting down")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -117,7 +119,10 @@ func execute() error {
 }
 
 func main() {
-	if err := execute(); err != nil {
-		log.Fatal(err)
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	if err := execute(logger); err != nil {
+		logger.Error("failed to execute", "error", err)
+		os.Exit(-1)
 	}
 }

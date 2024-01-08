@@ -8,6 +8,7 @@ import (
 	"crypto/rsa"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"net/netip"
 	"strings"
@@ -21,6 +22,8 @@ import (
 )
 
 type Server struct {
+	logger *slog.Logger
+
 	ipamV4 *ipam.IPAM
 	ipamV6 *ipam.IPAM
 	key    *rsa.PrivateKey
@@ -42,8 +45,9 @@ type Server struct {
 	webhookSecret     string
 }
 
-func New(ipamV4 *ipam.IPAM, ipamV6 *ipam.IPAM, key *rsa.PrivateKey, id string, filesystem, kernelImage, jailerBinary, firecrackerBinary, bridgeInterface, webhookSecret, organization string, bridgeIPv4 netip.Addr, bridgeIPv6 netip.Addr) *Server {
+func New(logger *slog.Logger, ipamV4 *ipam.IPAM, ipamV6 *ipam.IPAM, key *rsa.PrivateKey, id string, filesystem, kernelImage, jailerBinary, firecrackerBinary, bridgeInterface, webhookSecret, organization string, bridgeIPv4 netip.Addr, bridgeIPv6 netip.Addr) *Server {
 	return &Server{
+		logger:            logger,
 		ipamV4:            ipamV4,
 		ipamV6:            ipamV6,
 		key:               key,
@@ -117,7 +121,7 @@ func (s *Server) handleQueuedEvent(ctx context.Context, id int64) error {
 		return nil
 	}
 
-	runner, err := runner.New(id, s.bridgeInterface, s.ipamV4.Allocate(), s.ipamV6.Allocate(), s.kernelImage, s.filesystem, s.jailerBinary, s.firecrackerBinary)
+	runner, err := runner.New(s.logger, id, s.bridgeInterface, s.ipamV4.Allocate(), s.ipamV6.Allocate(), s.kernelImage, s.filesystem, s.jailerBinary, s.firecrackerBinary)
 	if err != nil {
 		return fmt.Errorf("failed to create runner: %w", err)
 	}
