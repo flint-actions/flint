@@ -130,31 +130,11 @@ func (s *Server) handleQueuedEvent(ctx context.Context, id int64) error {
 
 	log.Printf("spawning selfhosted runner: %s", runner.ID())
 
-	now := time.Now()
-	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
-		"iat": now.Unix(),
-		"exp": now.Add(10 * time.Minute).Unix(),
-		"iss": s.id,
-	})
-
-	tokenString, err := token.SignedString(s.key)
+	installationClient, err := s.newInstallationGitHubClient(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to generate jwt token: %w", err)
+		return fmt.Errorf("failed to create installation client: %w", err)
 	}
 
-	client := github.NewTokenClient(ctx, tokenString)
-
-	installation, _, err := client.Apps.FindOrganizationInstallation(ctx, s.organization)
-	if err != nil {
-		return fmt.Errorf("failed to find installation of app for organization: %w", err)
-	}
-
-	installationToken, _, err := client.Apps.CreateInstallationToken(ctx, installation.GetID(), &github.InstallationTokenOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to retrieve installation token: %w", err)
-	}
-
-	installationClient := github.NewTokenClient(ctx, installationToken.GetToken())
 	registrationToken, _, err := installationClient.Actions.CreateOrganizationRegistrationToken(ctx, s.organization)
 	if err != nil {
 		return fmt.Errorf("failed to retrieve orginzation self hosted runner token: %w", err)
@@ -171,7 +151,7 @@ func (s *Server) handleQueuedEvent(ctx context.Context, id int64) error {
 	return nil
 }
 
-func (s *Server) Controller(ctx context.Context) error {
+func (s *Server) newInstallationGitHubClient(ctx context.Context) (*github.Client, error) {
 	now := time.Now()
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
 		"iat": now.Unix(),
@@ -181,27 +161,40 @@ func (s *Server) Controller(ctx context.Context) error {
 
 	tokenString, err := token.SignedString(s.key)
 	if err != nil {
-		return fmt.Errorf("failed to generate jwt token: %w", err)
+		return nil, fmt.Errorf("failed to generate jwt token: %w", err)
 	}
 
 	client := github.NewTokenClient(ctx, tokenString)
 
 	installation, _, err := client.Apps.FindOrganizationInstallation(ctx, s.organization)
 	if err != nil {
-		return fmt.Errorf("failed to find installation of app for organization: %w", err)
+		return nil, fmt.Errorf("failed to find installation of app for organization: %w", err)
 	}
 
 	installationToken, _, err := client.Apps.CreateInstallationToken(ctx, installation.GetID(), &github.InstallationTokenOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to retrieve installation token: %w", err)
+		return nil, fmt.Errorf("failed to retrieve installation token: %w", err)
 	}
 
-	installationClient := github.NewTokenClient(ctx, installationToken.GetToken())
+	return github.NewTokenClient(ctx, installationToken.GetToken()), nil
+}
+
+func (s *Server) Controller(ctx context.Context) error {
+	installationClient, err := s.newInstallationGitHubClient(ctx)
+	if err != nil {
+		return err
+	}
 	for {
 		time.Sleep(5 * time.Minute)
 		repositories, _, err := installationClient.Apps.ListRepos(ctx, &github.ListOptions{})
 		if err != nil {
 			log.Printf("failed to list organization repositories: %v", err)
+
+			installationClient, err = s.newInstallationGitHubClient(ctx)
+			if err != nil {
+				return fmt.Errorf("failed to renew installation client: %w", err)
+			}
+
 			continue
 		}
 		for _, repo := range repositories.Repositories {
