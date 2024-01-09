@@ -38,6 +38,7 @@ type Runner struct {
 	firecrackerBinary string
 	jailerBinary      string
 
+	logger *slog.Logger
 	logrus *logrus.Logger
 }
 
@@ -104,10 +105,14 @@ func New(logger *slog.Logger, githubID int64, bridgeInterface string, ipv4 netip
 		jailerBinary:      jailerBinary,
 		firecrackerBinary: firecrackerBinary,
 
+		logger: logger,
 		logrus: &logrus.Logger{
-			Out:   io.Discard,
-			Level: logrus.DebugLevel,
-			Hooks: make(logrus.LevelHooks),
+			Out:          io.Discard,
+			Level:        logrus.DebugLevel,
+			Hooks:        make(logrus.LevelHooks),
+			Formatter:    new(logrus.TextFormatter),
+			ExitFunc:     os.Exit,
+			ReportCaller: false,
 		},
 	}
 	r.logrus.Hooks.Add(&wrappingHook{logger: logger})
@@ -210,6 +215,7 @@ func (r *Runner) Start(ctx context.Context, token string, labels []string, bridg
 
 	r.machine = m
 
+	r.logger.Info("starting runner", "ipv4", r.ipv4.String(), "ipv6", r.ipv6.String(), "githubID", r.githubID, "id", r.id)
 	if err := m.Start(ctx); err != nil {
 		r.destroyInterface(ctx)
 		return fmt.Errorf("failed to start microvm: %w", err)
