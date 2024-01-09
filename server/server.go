@@ -43,9 +43,10 @@ type Server struct {
 	bridgeIPv6        netip.Addr
 	organization      string
 	webhookSecret     string
+	labels            []string
 }
 
-func New(logger *slog.Logger, ipamV4 *ipam.IPAM, ipamV6 *ipam.IPAM, key *rsa.PrivateKey, id string, filesystem, kernelImage, jailerBinary, firecrackerBinary, bridgeInterface, webhookSecret, organization string, bridgeIPv4 netip.Addr, bridgeIPv6 netip.Addr) *Server {
+func New(logger *slog.Logger, ipamV4 *ipam.IPAM, ipamV6 *ipam.IPAM, key *rsa.PrivateKey, id string, filesystem, kernelImage, jailerBinary, firecrackerBinary, bridgeInterface, webhookSecret, organization string, bridgeIPv4 netip.Addr, bridgeIPv6 netip.Addr, labels []string) *Server {
 	return &Server{
 		logger:            logger,
 		ipamV4:            ipamV4,
@@ -63,6 +64,7 @@ func New(logger *slog.Logger, ipamV4 *ipam.IPAM, ipamV6 *ipam.IPAM, key *rsa.Pri
 		organization:      organization,
 		githubMap:         make(map[int64]string),
 		runner:            make(map[string]*runner.Runner),
+		labels:            labels,
 	}
 }
 
@@ -159,7 +161,7 @@ func (s *Server) handleQueuedEvent(ctx context.Context, id int64) error {
 	}
 
 	vmmContext, _ := context.WithTimeout(context.Background(), 120*time.Minute)
-	err = runner.Start(vmmContext, registrationToken.GetToken(), s.bridgeIPv4, s.bridgeIPv6, false)
+	err = runner.Start(vmmContext, registrationToken.GetToken(), s.labels, s.bridgeIPv4, s.bridgeIPv6, false)
 	if err != nil {
 		return fmt.Errorf("failed to start runner: %w", err)
 	}
@@ -227,7 +229,7 @@ func (s *Server) Controller(ctx context.Context) error {
 
 				for _, job := range jobs.Jobs {
 					id := job.GetRunID()
-					if !jobHasLabel(job, "self-hosted") {
+					if !jobHasLabels(job, s.labels) {
 						continue
 					}
 
@@ -251,13 +253,19 @@ func (s *Server) Controller(ctx context.Context) error {
 	}
 }
 
-func jobHasLabel(job *github.WorkflowJob, label string) bool {
-	for _, l := range job.Labels {
-		if l == label {
-			return true
+func jobHasLabels(job *github.WorkflowJob, labels []string) bool {
+	for _, label := range labels {
+		hasLabel := false
+		for _, l := range job.Labels {
+			if label == l {
+				hasLabel = true
+			}
+		}
+		if !hasLabel {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -282,14 +290,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch event := event.(type) {
 	case *github.WorkflowJobEvent:
 		job := event.GetWorkflowJob()
-		if event.GetAction() == "queued" && jobHasLabel(job, "self-hosted") {
+		if event.GetAction() == "queued" && jobHasLabels(job, s.labels) {
 			log.Printf("Received queued event with id: %d", job.GetRunID())
 			if err := s.handleQueuedEvent(r.Context(), job.GetRunID()); err != nil {
 				log.Println(err)
 				http.Error(w, "internal server error", http.StatusInternalServerError)
 			}
 		}
-		if event.GetAction() == "completed" && jobHasLabel(job, "self-hosted") {
+		if event.GetAction() == "completed" && jobHasLabels(job, s.labels) {
 			log.Printf("received shutdown event")
 
 			runID := event.GetWorkflowJob().GetRunID()

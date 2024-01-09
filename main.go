@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/tobiaskohlbau/flint/pkg/ipam"
@@ -34,6 +35,7 @@ func execute(logger *slog.Logger) error {
 	bridgeInterface := flag.String("bridge", "br-flint", "bridge interface name")
 	interactive := flag.Bool("interactive", false, "interactive vm without webhook")
 	address := flag.String("address", ":9198", "address to listen on")
+	labels := flag.String("labels", "", "labels to work on")
 	flag.Parse()
 
 	ipamV4, err := ipam.New(*ipv4Pool)
@@ -62,7 +64,7 @@ func execute(logger *slog.Logger) error {
 		defer stop()
 
 		go func() {
-			err = runner.Start(ctx, "", bridgeIPv4, bridgeIPv6, *interactive)
+			err = runner.Start(ctx, "", []string{}, bridgeIPv4, bridgeIPv6, *interactive)
 			if err != nil {
 				logger.Error("failed to start interactive runner", "error", err)
 				stop()
@@ -91,7 +93,8 @@ func execute(logger *slog.Logger) error {
 		return fmt.Errorf("failed to parse github app client key: %w", err)
 	}
 
-	server := server.New(logger, ipamV4, ipamV6, appKey, *githubAppID, *filesystem, *kernelImage, *jailerBinary, *firecrackerBinary, *bridgeInterface, *githubWebhookSecret, *githubOrganization, bridgeIPv4, bridgeIPv6)
+	splittedLabels := strings.Split(*labels, ",")
+	server := server.New(logger, ipamV4, ipamV6, appKey, *githubAppID, *filesystem, *kernelImage, *jailerBinary, *firecrackerBinary, *bridgeInterface, *githubWebhookSecret, *githubOrganization, bridgeIPv4, bridgeIPv6, splittedLabels)
 
 	go func() {
 		logger.Error("failed to run controller", "error", server.Controller(context.Background()))

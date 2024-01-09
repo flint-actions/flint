@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/firecracker-microvm/firecracker-go-sdk"
@@ -181,7 +182,7 @@ func (r *Runner) Stop(ctx context.Context) error {
 	return nil
 }
 
-func (r *Runner) Start(ctx context.Context, token string, bridgeIPV4 netip.Addr, bridgeIPV6 netip.Addr, interactive bool) error {
+func (r *Runner) Start(ctx context.Context, token string, labels []string, bridgeIPV4 netip.Addr, bridgeIPV6 netip.Addr, interactive bool) error {
 	if err := r.setupInterface(ctx); err != nil {
 		return fmt.Errorf("failed to create network interface: %w", err)
 	}
@@ -218,6 +219,7 @@ func (r *Runner) Start(ctx context.Context, token string, bridgeIPV4 netip.Addr,
 		"latest": map[string]interface{}{
 			"meta-data": map[string]string{
 				"token":       token,
+				"labels":      strings.Join(labels, ","),
 				"hostname":    r.id,
 				"ipv4":        r.ipv4.String(),
 				"ipv6":        r.ipv6.String(),
