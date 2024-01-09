@@ -12,7 +12,7 @@ do
 done
 
 # Install runtime dependencies
-apt-get install -yq systemd udev
+apt-get install -yq systemd udev openssh-server
 
 mkdir -p /etc/systemd/system/sockets.target.wants
 mkdir -p /etc/systemd/system/network-online.target.wants

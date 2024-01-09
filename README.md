@@ -29,6 +29,8 @@ make filesystem
 make kernel
 ```
 
+*Please be aware the filesystem contains an active ssh server. Take care not to expose the vm ports by accident!*
+
 This builts a filesystem, kernel in `build/rootfs/rootfs.ext4` and `build/kernel/linux/vmlinux`. Additionally
 [firecracker](https://github.com/firecracker-microvm/firecracker) and it's jailer binary are needed.
 For more information have a look into `scripts/filesystem.sh` and `scripts/kernel.sh`.
