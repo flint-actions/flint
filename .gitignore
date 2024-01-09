@@ -2,3 +2,5 @@ build/
 flint
 .envrc
 .direnv/
+
+dist/

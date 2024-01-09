@@ -5,6 +5,7 @@ mkShell {
     nixpkgs-fmt
     pkgs.go
     pkgs.gopls
+    pkgs.goreleaser
   ];
 
   shellHook = ''
