@@ -221,7 +221,7 @@ func (s *Server) Controller(ctx context.Context) error {
 				}
 
 				for _, job := range jobs.Jobs {
-					id := job.GetRunID()
+					id := job.GetID()
 					if !jobHasLabels(job, s.labels) {
 						continue
 					}
@@ -284,8 +284,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case *github.WorkflowJobEvent:
 		job := event.GetWorkflowJob()
 		if event.GetAction() == "queued" && jobHasLabels(job, s.labels) {
-			log.Printf("Received queued event with id: %d", job.GetRunID())
-			if err := s.handleQueuedEvent(r.Context(), job.GetRunID()); err != nil {
+			log.Printf("Received queued event with id: %d", job.GetID())
+			if err := s.handleQueuedEvent(r.Context(), job.GetID()); err != nil {
 				log.Println(err)
 				http.Error(w, "internal server error", http.StatusInternalServerError)
 			}
@@ -293,7 +293,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if event.GetAction() == "completed" && jobHasLabels(job, s.labels) {
 			log.Printf("received shutdown event")
 
-			runID := event.GetWorkflowJob().GetRunID()
+			runID := event.GetWorkflowJob().GetID()
 			runner, err := s.runnerByGitHubID(runID)
 			if err != nil {
 				log.Println(err)
