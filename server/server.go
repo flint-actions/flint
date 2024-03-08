@@ -30,9 +30,9 @@ type Server struct {
 	id     string
 
 	// guards the following two fields
-	m         sync.Mutex
-	githubMap map[int64]string
-	runner    map[string]*runner.Runner
+	m             sync.Mutex
+	processedJobs map[int64]any
+	runner        map[string]*runner.Runner
 
 	filesystem        string
 	kernelImage       string
@@ -62,31 +62,27 @@ func New(logger *slog.Logger, ipamV4 *ipam.IPAM, ipamV6 *ipam.IPAM, key *rsa.Pri
 		bridgeIPv4:        bridgeIPv4,
 		bridgeIPv6:        bridgeIPv6,
 		organization:      organization,
-		githubMap:         make(map[int64]string),
+		processedJobs:     make(map[int64]any),
 		runner:            make(map[string]*runner.Runner),
 		labels:            labels,
 	}
 }
 
-func (s *Server) runnerByGitHubID(id int64) (*runner.Runner, error) {
+func (s *Server) runnerByName(name string) (*runner.Runner, error) {
 	s.m.Lock()
 	defer s.m.Unlock()
-	runnerID, ok := s.githubMap[id]
-	if !ok {
-		return nil, fmt.Errorf("runner with id not found: %d", id)
-	}
 
-	runner, ok := s.runner[runnerID]
+	runner, ok := s.runner[name]
 	if !ok {
-		return nil, fmt.Errorf("runner with internal id not found: %d", id)
+		return nil, fmt.Errorf("runner with name not found: %s", name)
 	}
 	return runner, nil
 }
 
-func (s *Server) hasRunnerForGithubID(id int64) bool {
+func (s *Server) hasProcessedJob(id int64) bool {
 	s.m.Lock()
 	defer s.m.Unlock()
-	_, ok := s.githubMap[id]
+	_, ok := s.processedJobs[id]
 	return ok
 }
 
@@ -95,14 +91,12 @@ func (s *Server) removeRunner(runner *runner.Runner) {
 	defer s.m.Unlock()
 	s.ipamV4.Release(runner.IPv4())
 	s.ipamV6.Release(runner.IPv6())
-	delete(s.githubMap, runner.GitHubID())
 	delete(s.runner, runner.ID())
 }
 
 func (s *Server) addRunner(runner *runner.Runner) {
 	s.m.Lock()
 	defer s.m.Unlock()
-	s.githubMap[runner.GitHubID()] = runner.ID()
 	s.runner[runner.ID()] = runner
 }
 
@@ -118,12 +112,12 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 func (s *Server) handleQueuedEvent(ctx context.Context, id int64) error {
-	if s.hasRunnerForGithubID(id) {
+	if s.hasProcessedJob(id) {
 		log.Printf("ignoring event, runner for %d already exists", id)
 		return nil
 	}
 
-	runner, err := runner.New(s.logger, id, s.bridgeInterface, s.ipamV4.Allocate(), s.ipamV6.Allocate(), s.kernelImage, s.filesystem, s.jailerBinary, s.firecrackerBinary)
+	runner, err := runner.New(s.logger, s.bridgeInterface, s.ipamV4.Allocate(), s.ipamV6.Allocate(), s.kernelImage, s.filesystem, s.jailerBinary, s.firecrackerBinary)
 	if err != nil {
 		return fmt.Errorf("failed to create runner: %w", err)
 	}
@@ -145,6 +139,8 @@ func (s *Server) handleQueuedEvent(ctx context.Context, id int64) error {
 	if err != nil {
 		return fmt.Errorf("failed to start runner: %w", err)
 	}
+
+	log.Printf("launched runner %s", runner.ID())
 
 	s.addRunner(runner)
 
@@ -226,7 +222,7 @@ func (s *Server) Controller(ctx context.Context) error {
 						continue
 					}
 
-					if s.hasRunnerForGithubID(id) {
+					if s.hasProcessedJob(id) {
 						continue
 					}
 
@@ -291,18 +287,21 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if event.GetAction() == "completed" && jobHasLabels(job, s.labels) {
-			log.Printf("received shutdown event")
-
-			runID := event.GetWorkflowJob().GetID()
-			runner, err := s.runnerByGitHubID(runID)
+			runnerName := event.GetWorkflowJob().GetRunnerName()
+			runner, err := s.runnerByName(runnerName)
 			if err != nil {
 				log.Println(err)
 				return
 			}
+
+			log.Printf("received completed event for runner runner %s", runner.ID())
+
 			if err := runner.Stop(r.Context()); err != nil {
 				log.Println(err)
 			}
+
 			s.removeRunner(runner)
+			delete(s.processedJobs, *event.GetWorkflowJob().ID)
 		}
 	default:
 		ev := event.(github.Event)

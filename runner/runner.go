@@ -22,7 +22,6 @@ import (
 )
 
 type Runner struct {
-	githubID        int64
 	id              string
 	machine         *firecracker.Machine
 	iface           string
@@ -76,7 +75,7 @@ func (h *wrappingHook) Fire(entry *logrus.Entry) error {
 	return nil
 }
 
-func New(logger *slog.Logger, githubID int64, bridgeInterface string, ipv4 netip.Addr, ipv6 netip.Addr, kernel, filesystem, jailerBinary, firecrackerBinary string) (*Runner, error) {
+func New(logger *slog.Logger, bridgeInterface string, ipv4 netip.Addr, ipv6 netip.Addr, kernel, filesystem, jailerBinary, firecrackerBinary string) (*Runner, error) {
 	id := generateID()
 
 	macBuffer := make([]byte, 6)
@@ -90,7 +89,6 @@ func New(logger *slog.Logger, githubID int64, bridgeInterface string, ipv4 netip
 	macAddress := fmt.Sprintf("%02x:%02x:%02x:%02x:%02x:%02x", macBuffer[0], macBuffer[1], macBuffer[2], macBuffer[3], macBuffer[4], macBuffer[5])
 
 	r := &Runner{
-		githubID:        githubID,
 		id:              id,
 		iface:           "tap" + id,
 		ipv4:            ipv4,
@@ -120,10 +118,6 @@ func New(logger *slog.Logger, githubID int64, bridgeInterface string, ipv4 netip
 
 func (r *Runner) ID() string {
 	return r.id
-}
-
-func (r *Runner) GitHubID() int64 {
-	return r.githubID
 }
 
 func (r *Runner) IPv4() netip.Addr {
@@ -214,7 +208,7 @@ func (r *Runner) Start(ctx context.Context, token string, labels []string, bridg
 
 	r.machine = m
 
-	r.logger.Info("starting runner", "ipv4", r.ipv4.String(), "ipv6", r.ipv6.String(), "githubID", r.githubID, "id", r.id)
+	r.logger.Info("starting runner", "ipv4", r.ipv4.String(), "ipv6", r.ipv6.String(), "id", r.id)
 	if err := m.Start(ctx); err != nil {
 		r.destroyInterface(ctx)
 		return fmt.Errorf("failed to start microvm: %w", err)
