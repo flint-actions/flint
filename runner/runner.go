@@ -15,7 +15,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/firecracker-microvm/firecracker-go-sdk"
 	"github.com/firecracker-microvm/firecracker-go-sdk/client/models"
@@ -323,10 +322,6 @@ func (r *Runner) createConfig(ctx context.Context) (*firecracker.Config, error) 
 	}
 
 	return cfg, nil
-}
-
-func init() {
-	rand.Seed(time.Now().UnixNano())
 }
 
 const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890"
