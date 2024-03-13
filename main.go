@@ -10,12 +10,14 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"time"
 
+	"github.com/caddyserver/certmagic"
 	"github.com/tobiaskohlbau/flint/pkg/ipam"
 	"github.com/tobiaskohlbau/flint/runner"
 	"github.com/tobiaskohlbau/flint/server"
@@ -36,6 +38,7 @@ func execute(logger *slog.Logger) error {
 	interactive := flag.Bool("interactive", false, "interactive vm without webhook")
 	address := flag.String("address", ":9198", "address to listen on")
 	labels := flag.String("labels", "", "labels to work on")
+	email := flag.String("email", "", "E-Mail for the HTTPs certificate")
 	flag.Parse()
 
 	ipamV4, err := ipam.New(*ipv4Pool)
@@ -105,8 +108,30 @@ func execute(logger *slog.Logger) error {
 	defer stop()
 
 	go func() {
-		logger.Error("failed to listen", "error", http.ListenAndServe(*address, server))
-		os.Exit(-1)
+		var err error
+
+		host, port, err := net.SplitHostPort(*address)
+		if err != nil {
+			logger.Error("could not split host port", "error", err)
+			os.Exit(-1)
+		}
+
+		if *email == "" && host != "" && port == "443" {
+			logger.Error("could not activate HTTPS without email")
+			os.Exit(-1)
+		}
+
+		if host != "" && port == "443" {
+			certmagic.DefaultACME.Email = *email
+			err = certmagic.HTTPS([]string{host}, server)
+		} else {
+			err = http.ListenAndServe(*address, server)
+		}
+
+		if err != nil {
+			logger.Error("failed to listen", "error", err)
+			os.Exit(-1)
+		}
 	}()
 
 	<-ctx.Done()
