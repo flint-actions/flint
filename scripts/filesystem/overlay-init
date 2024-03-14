@@ -6,52 +6,37 @@ mkdir -p /overlay/root /overlay/work /overlay
 /bin/mount -o noatime,lowerdir=/,upperdir=/overlay/root,workdir=/overlay/work -t overlay "overlayfs:/overlay/root" /mnt
 pivot_root /mnt /mnt/rom
 
+echo "${1}" > /etc/hostname
+shift
+
 mkdir -p /run
 /bin/mount -o rw,nodev,nosuid,size=1G -t tmpfs tmpfs /run
 mkdir -p /run/systemd/network/
-
-MMDS_IPV4_ADDR=169.254.169.254
-TOKEN=$(curl -X PUT "http://${MMDS_IPV4_ADDR}/latest/api/token" \
-	      -H "X-metadata-token-ttl-seconds: 21600")
-
-RESOURCE_POINTER_OBJ=latest/meta-data/ipv4
-IPV4_ADDR=$(curl -s "http://${MMDS_IPV4_ADDR}/${RESOURCE_POINTER_OBJ}" \
-	        -H "X-metadata-token: ${TOKEN}")
-
-RESOURCE_POINTER_OBJ=latest/meta-data/ipv6
-IPV6_ADDR=$(curl -s "http://${MMDS_IPV4_ADDR}/${RESOURCE_POINTER_OBJ}" \
-	        -H "X-metadata-token: ${TOKEN}")
-
-RESOURCE_POINTER_OBJ=latest/meta-data/bridge-ipv4
-BRIDGE_IPV4_ADDR=$(curl -s "http://${MMDS_IPV4_ADDR}/${RESOURCE_POINTER_OBJ}" \
-	        -H "X-metadata-token: ${TOKEN}")
-
-RESOURCE_POINTER_OBJ=latest/meta-data/bridge-ipv6
-BRIDGE_IPV6_ADDR=$(curl -s "http://${MMDS_IPV4_ADDR}/${RESOURCE_POINTER_OBJ}" \
-	        -H "X-metadata-token: ${TOKEN}")
 
 echo "
 [Match]
 Name=eth0
 
 [Address]
-Address=${IPV4_ADDR}/24
+Address=${1}/24
+
+[Route]
+Gateway=${2}
+" > /run/systemd/network/01-wired.network
+shift 2
+
+if [ "${1}" != "" ]; then
+shift 2
+echo "
 
 [Address]
-Address=${IPV6_ADDR}/80
+Address=${1}/80
 
 [Route]
-Gateway=${BRIDGE_IPV4_ADDR}
-
-[Route]
-Gateway=${BRIDGE_IPV6_ADDR}
-" > /run/systemd/network/01-wired.network
+Gateway=${2}
+" >> /run/systemd/network/01-wired.network
+fi
 
 cat /run/systemd/network/01-wired.network
 
-RESOURCE_POINTER_OBJ=latest/meta-data/hostname
-HOSTNAME=$(curl -s "http://${MMDS_IPV4_ADDR}/${RESOURCE_POINTER_OBJ}" \
-	        -H "X-metadata-token: ${TOKEN}")
-echo "$HOSTNAME" > /etc/hostname
-
-exec /lib/systemd/systemd "$@"
+exec /lib/systemd/systemd
