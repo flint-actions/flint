@@ -3,8 +3,6 @@ set -e
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get upgrade -y
-#  Install build dependencies
-apt-get install -yq curl ca-certificates jq unzip sudo
 
 for file in /filesystem/scripts/*
 do
@@ -12,7 +10,7 @@ do
 done
 
 # Install runtime dependencies
-apt-get install -yq systemd udev openssh-server
+apt-get install -yq curl systemd udev openssh-server
 
 mkdir -p /etc/systemd/system/sockets.target.wants
 mkdir -p /etc/systemd/system/network-online.target.wants
@@ -32,10 +30,6 @@ cp /filesystem/overlay-init /sbin/overlay-init
 # add user runner with password runner for debugging
 useradd -m -p "\$6\$rVYDvnAGAn72RNo\$DcdeQcg8MVHV95pfmD82ZheumYpfTpbYaRLOO6JTGkfiYNg6hXiuxJvp/YoxnqRKvfD86J8qjGFKCNQWHXQjh." -s /bin/bash runner
 usermod -a -G sudo runner
-
-# 1Password/load-secrets-action writes it's binary into /usr/local/bin. Therefore this directory needs to be writable by the runner.
-# See https://github.com/1Password/load-secrets-action/issues/26 for more information.
-chmod -R 777 /usr/local/bin
 
 cd /home/runner/
 mkdir actions-runner && cd actions-runner
