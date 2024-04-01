@@ -58,7 +58,7 @@ func execute(logger *slog.Logger) error {
 	bridgeIPv6 := ipamV6.Allocate()
 
 	if *interactive {
-		runner, err := runner.New(logger, *bridgeInterface, ipamV4.Allocate(), ipamV6.Allocate(), *kernelImage, *filesystem, *jailerBinary, *firecrackerBinary)
+		runner, err := runner.New(logger, *bridgeInterface, ipamV4.Allocate(), ipamV6.Allocate(), *kernelImage, *filesystem, *jailerBinary, *firecrackerBinary, bridgeIPv4, bridgeIPv6)
 		if err != nil {
 			return fmt.Errorf("failed to create runner interactive: %w", err)
 		}
@@ -67,7 +67,7 @@ func execute(logger *slog.Logger) error {
 		defer stop()
 
 		go func() {
-			err = runner.Start(ctx, "", []string{}, bridgeIPv4, bridgeIPv6, *interactive)
+			err = runner.Start(ctx, "", []string{}, *interactive)
 			if err != nil {
 				logger.Error("failed to start interactive runner", "error", err)
 				stop()

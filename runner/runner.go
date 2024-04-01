@@ -25,6 +25,8 @@ type Runner struct {
 	id              string
 	machine         *firecracker.Machine
 	iface           string
+	bridgeIPv4      netip.Addr
+	bridgeIPv6      netip.Addr
 	ipv4            netip.Addr
 	ipv6            netip.Addr
 	bridgeInterface string
@@ -75,7 +77,7 @@ func (h *wrappingHook) Fire(entry *logrus.Entry) error {
 	return nil
 }
 
-func New(logger *slog.Logger, bridgeInterface string, ipv4 netip.Addr, ipv6 netip.Addr, kernel, filesystem, jailerBinary, firecrackerBinary string) (*Runner, error) {
+func New(logger *slog.Logger, bridgeInterface string, ipv4 netip.Addr, ipv6 netip.Addr, kernel, filesystem, jailerBinary, firecrackerBinary string, bridgeIPv4 netip.Addr, bridgeIPv6 netip.Addr) (*Runner, error) {
 	id := generateID()
 
 	macBuffer := make([]byte, 6)
@@ -91,6 +93,8 @@ func New(logger *slog.Logger, bridgeInterface string, ipv4 netip.Addr, ipv6 neti
 	r := &Runner{
 		id:              id,
 		iface:           "tap" + id,
+		bridgeIPv4:      bridgeIPv4,
+		bridgeIPv6:      bridgeIPv6,
 		ipv4:            ipv4,
 		ipv6:            ipv6,
 		bridgeInterface: bridgeInterface,
@@ -180,7 +184,7 @@ func (r *Runner) Stop(ctx context.Context) error {
 	return nil
 }
 
-func (r *Runner) Start(ctx context.Context, token string, labels []string, bridgeIPV4 netip.Addr, bridgeIPV6 netip.Addr, interactive bool) error {
+func (r *Runner) Start(ctx context.Context, token string, labels []string, interactive bool) error {
 	if err := r.setupInterface(ctx); err != nil {
 		return fmt.Errorf("failed to create network interface: %w", err)
 	}
@@ -217,13 +221,8 @@ func (r *Runner) Start(ctx context.Context, token string, labels []string, bridg
 	metadata := map[string]interface{}{
 		"latest": map[string]interface{}{
 			"meta-data": map[string]string{
-				"token":       token,
-				"labels":      strings.Join(labels, ","),
-				"hostname":    r.id,
-				"ipv4":        r.ipv4.String(),
-				"ipv6":        r.ipv6.String(),
-				"bridge-ipv4": bridgeIPV4.String(),
-				"bridge-ipv6": bridgeIPV6.String(),
+				"token":  token,
+				"labels": strings.Join(labels, ","),
 			},
 		},
 	}
@@ -262,7 +261,7 @@ func createDiskImage(ctx context.Context, path string, size int64, uid int, gid 
 }
 
 func (r *Runner) createConfig(ctx context.Context) (*firecracker.Config, error) {
-	bootArgs := fmt.Sprintf("console=ttyS0 reboot=k panic=1 pci=off init=/sbin/overlay-init ip=169.254.169.1::169.254.169.254:255.255.0.0::eth0:off::%s", r.mac)
+	bootArgs := fmt.Sprintf("console=ttyS0 reboot=k panic=1 pci=off init=/sbin/overlay-init -- %s %s %s %s %s", r.id, r.ipv4, r.bridgeIPv4, r.ipv6, r.bridgeIPv6)
 
 	var vcpuCount int64 = 2
 	var memSizeMib int64 = 2048

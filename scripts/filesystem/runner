@@ -13,6 +13,10 @@ RESOURCE_POINTER_OBJ=latest/meta-data/labels
 GITHUB_RUNNER_LABELS=$(curl -s "http://${MMDS_IPV4_ADDR}/${RESOURCE_POINTER_OBJ}" \
 	-H "X-metadata-token: ${TOKEN}")
 
+RESOURCE_POINTER_OBJ=latest/meta-data/group
+GITHUB_RUNNER_GROUP=$(curl -s "http://${MMDS_IPV4_ADDR}/${RESOURCE_POINTER_OBJ}" \
+	-H "X-metadata-token: ${TOKEN}")
+
 cd /home/runner/actions-runner || exit 1
-./config.sh --url https://github.com/myopenfactory --token "$GITHUB_RUNNER_TOKEN" --ephemeral --unattended --name "$(hostname)" --labels "$GITHUB_RUNNER_LABELS"
+./config.sh --url https://github.com/myopenfactory --token "$GITHUB_RUNNER_TOKEN" --ephemeral --unattended --name "$(hostname)" --labels "$GITHUB_RUNNER_LABELS" --runnergroup "$GITHUB_RUNNER_GROUP"
 ./run.sh

@@ -117,7 +117,7 @@ func (s *Server) handleQueuedEvent(ctx context.Context, id int64) error {
 		return nil
 	}
 
-	runner, err := runner.New(s.logger, s.bridgeInterface, s.ipamV4.Allocate(), s.ipamV6.Allocate(), s.kernelImage, s.filesystem, s.jailerBinary, s.firecrackerBinary)
+	runner, err := runner.New(s.logger, s.bridgeInterface, s.ipamV4.Allocate(), s.ipamV6.Allocate(), s.kernelImage, s.filesystem, s.jailerBinary, s.firecrackerBinary, s.bridgeIPv4, s.bridgeIPv6)
 	if err != nil {
 		return fmt.Errorf("failed to create runner: %w", err)
 	}
@@ -135,7 +135,7 @@ func (s *Server) handleQueuedEvent(ctx context.Context, id int64) error {
 	}
 
 	vmmContext, _ := context.WithTimeout(context.Background(), 120*time.Minute)
-	err = runner.Start(vmmContext, registrationToken.GetToken(), s.labels, s.bridgeIPv4, s.bridgeIPv6, false)
+	err = runner.Start(vmmContext, registrationToken.GetToken(), s.labels, false)
 	if err != nil {
 		return fmt.Errorf("failed to start runner: %w", err)
 	}
