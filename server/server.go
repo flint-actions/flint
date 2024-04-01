@@ -16,11 +16,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/flint-actions/flint/config"
+	"github.com/flint-actions/flint/network"
+	"github.com/flint-actions/flint/runner"
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/google/go-github/v50/github"
-	"github.com/tobiaskohlbau/flint/config"
-	"github.com/tobiaskohlbau/flint/network"
-	"github.com/tobiaskohlbau/flint/runner"
 	"golang.org/x/exp/slices"
 )
 

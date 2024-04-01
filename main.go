@@ -16,10 +16,10 @@ import (
 	"time"
 
 	"github.com/caddyserver/certmagic"
-	"github.com/tobiaskohlbau/flint/config"
-	"github.com/tobiaskohlbau/flint/network"
-	"github.com/tobiaskohlbau/flint/runner"
-	"github.com/tobiaskohlbau/flint/server"
+	"github.com/flint-actions/flint/config"
+	"github.com/flint-actions/flint/network"
+	"github.com/flint-actions/flint/runner"
+	"github.com/flint-actions/flint/server"
 	"golang.org/x/exp/slices"
 	yaml "gopkg.in/yaml.v3"
 )

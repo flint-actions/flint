@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 find . -type f -name '*.go' -print0 | while read -r -d $'\0' file
 do

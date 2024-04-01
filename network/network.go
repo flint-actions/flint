@@ -1,3 +1,6 @@
+// Copyright 2023 The Flint Authors.
+// SPDX-License-Identifier: Apache-2.0
+
 package network
 
 import (

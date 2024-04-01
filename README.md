@@ -13,7 +13,7 @@ Expect bugs! Flint is very early in it's development and did not have a stable r
 To get started with Flint compile it from source via:
 
 ```sh
-git clone https://github.com/tobiaskohlbau/flint
+git clone https://github.com/flint-actions/flint
 cd flint
 make build
 ````
