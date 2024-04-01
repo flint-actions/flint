@@ -6,6 +6,7 @@ mkShell {
     pkgs.go
     pkgs.gopls
     pkgs.goreleaser
+    pkgs.shellcheck
   ];
 
   shellHook = ''
