@@ -8,12 +8,14 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"time"
 
+	"github.com/caddyserver/certmagic"
 	"github.com/tobiaskohlbau/flint/config"
 	"github.com/tobiaskohlbau/flint/network"
 	"github.com/tobiaskohlbau/flint/runner"
@@ -116,7 +118,26 @@ func execute(logger *slog.Logger, logLevel *slog.LevelVar) error {
 	defer stop()
 
 	go func() {
-		err := http.ListenAndServe(cfg.Address, server)
+		var err error
+
+		host, port, err := net.SplitHostPort(cfg.Address)
+		if err != nil {
+			logger.Error("could not split host port", "error", err)
+			os.Exit(-1)
+		}
+		if cfg.Email == "" && host != "" && port == "443" {
+			logger.Error("could not activate HTTPS without email")
+			os.Exit(-1)
+		}
+
+		if host != "" && port == "443" {
+			certmagic.DefaultACME.Email = cfg.Email
+			err = certmagic.HTTPS([]string{host}, server)
+		} else {
+			err = http.ListenAndServe(cfg.Address, server)
+		}
+
+		err = http.ListenAndServe(cfg.Address, server)
 		if err != nil {
 			logger.Error("failed to listen", "error", err)
 			os.Exit(-1)
