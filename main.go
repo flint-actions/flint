@@ -75,7 +75,7 @@ func execute(logger *slog.Logger, logLevel *slog.LevelVar) error {
 		net := networks[runnerConfig.Network]
 		ipv4 := net.Allocate(network.IPv4)
 		ipv6 := net.Allocate(network.IPv6)
-		runner, err := runner.New(logger, net.Name, ipv4, ipv6, runnerConfig.Kernel, runnerConfig.Filesystem, runnerConfig.Jailer, runnerConfig.Firecracker, runnerConfig.Labels, runnerConfig.Group, net.Address(network.IPv4), net.Address(network.IPv6))
+		runner, err := runner.New(logger, net.Name, ipv4, ipv6, runnerConfig.Kernel, runnerConfig.Filesystem, runnerConfig.Jailer, runnerConfig.Firecracker, cfg.GitHub.Organization, runnerConfig.Labels, runnerConfig.Group, net.Address(network.IPv4), net.Address(network.IPv6))
 		if err != nil {
 			return fmt.Errorf("failed to create runner interactive: %w", err)
 		}

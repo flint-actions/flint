@@ -25,6 +25,7 @@ import (
 type Runner struct {
 	id              string
 	labels          []string
+	organization    string
 	group           string
 	machine         *firecracker.Machine
 	iface           string
@@ -88,7 +89,7 @@ func (h *wrappingHook) Fire(entry *logrus.Entry) error {
 	return nil
 }
 
-func New(logger *slog.Logger, bridgeInterface string, ipv4 netip.Addr, ipv6 netip.Addr, kernel, filesystem, jailerBinary, firecrackerBinary string, labels []string, group string, bridgeIPv4 netip.Addr, bridgeIPv6 netip.Addr) (*Runner, error) {
+func New(logger *slog.Logger, bridgeInterface string, ipv4 netip.Addr, ipv6 netip.Addr, kernel, filesystem, jailerBinary, firecrackerBinary string, organization string, labels []string, group string, bridgeIPv4 netip.Addr, bridgeIPv6 netip.Addr) (*Runner, error) {
 	id := generateID()
 
 	macBuffer := make([]byte, 6)
@@ -103,6 +104,7 @@ func New(logger *slog.Logger, bridgeInterface string, ipv4 netip.Addr, ipv6 neti
 
 	r := &Runner{
 		id:              id,
+		organization:    organization,
 		labels:          labels,
 		group:           group,
 		iface:           "tap" + id,
@@ -271,9 +273,10 @@ func (r *Runner) Start(ctx context.Context, token string) error {
 	metadata := map[string]map[string]map[string]string{
 		"latest": {
 			"meta-data": {
-				"token":  token,
-				"labels": strings.Join(r.labels, ","),
-				"group":  r.group,
+				"organization": r.organization,
+				"token":        token,
+				"labels":       strings.Join(r.labels, ","),
+				"group":        r.group,
 			},
 		},
 	}
