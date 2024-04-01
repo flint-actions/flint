@@ -56,7 +56,11 @@ ip link add name br-flint type bridge
 ip addr add 10.0.0.1/24 dev br-flint
 ip addr add fd3b:5cee:6e4c:2a55:1::2/80 dev br-flint
 ip link set dev br-flint up
+```
 
+For IP v6 use something similar to:
+
+```sh
 sysctl -w net.ipv6.conf.eth0.proxy_ndp=1
 ip -6 neighbour add proxy fd3b:5cee:6e4c:2a55:1::2/80 dev eth0
 ip -6 route add fd3b:5cee:6e4c:2a55:1::/80 dev br-flint
@@ -78,12 +82,46 @@ are needed to inform Flint about a new workflow which requires a runner.
 
 Put the `private.pem` file into for e.g. `/root/flint/`
 
+## Configuration
+
+Create a yaml configuration similar to for e.g.:
+
+```YAML
+logLevel: "debug"
+address: example.net:443
+email: flint@example.net
+networks:
+  - name:  "br-default"
+    v4: "10.0.0.1/24"
+github:
+  appID: "ID"
+  organization: "ORGANIZATION"
+  webhookSecret: "WEBHOOK_SECRET"
+  privateKey: |
+    -----BEGIN RSA PRIVATE KEY-----
+    ...
+    -----END RSA PRIVATE KEY-----
+runners:
+  - name: "Default"
+    group: "Default"
+    labels: [ "self-hosted", "Linux", "amd64" ]
+    kernel: "/root/flint/kernel/build/kernel/linux/vmlinux"
+    filesystem: "/root/flint/fs/build/rootfs/bazel.ext4"
+    jailer: "/root/flint/jailer"
+    firecracker: "/root/flint/firecracker"
+    network: "br-default"
+    cpuCount: 8
+    memorySize: 16384 # size in megabytes
+    smt: true
+    diskSize: 42949672960 # size in bytes
+```
+
 ## Launching
 
 Flint can be launched through multiple ways for example running it interactive:
 
 ```sh
-./flint --jailer=/root/flint/jailer --firecracker=/root/flint/firecracker --kernel=/root/flint/vmlinux --filesystem=/root/flint/rootfs.ext4 --privateKey=/root/flint/private.pem --webhookSecret=ABCDefgh --organization=flint-actions --appID=123456
+./flint --interactive
 ```
 
 This should launch flint and wait for any event which requires a self-hosted runner. Any action which should run und Flint
@@ -93,7 +131,6 @@ can be configured with:
 ```YAML
 runs-on: self-hosted
 ```
-
 
 For continous running flint a simple systemd service could be created:
 
@@ -107,7 +144,7 @@ Type=simple
 Restart=always
 RestartSec=1
 WorkingDirectory=/root/flint
-ExecStart=/root/flint/flint --jailer=/root/flint/jailer --firecracker=/root/flint/firecracker --kernel=/root/flint/vmlinux --filesystem=/root/flint/rootfs.ext4 --privateKey=/root/flint/private.pem --webhookSecret=ABCDefgh --organization=flint-actions
+ExecStart=/root/flint/flint
 
 [Install]
 WantedBy=multi-user.target
