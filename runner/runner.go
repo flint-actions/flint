@@ -4,6 +4,7 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -23,6 +24,8 @@ import (
 
 type Runner struct {
 	id              string
+	labels          []string
+	group           string
 	machine         *firecracker.Machine
 	iface           string
 	bridgeIPv4      netip.Addr
@@ -40,6 +43,13 @@ type Runner struct {
 
 	logger *slog.Logger
 	logrus *logrus.Logger
+
+	CpuCount   int64
+	MemorySize int64
+	SMT        bool
+	DiskSize   int64
+
+	Interactive bool
 }
 
 type wrappingHook struct {
@@ -73,11 +83,12 @@ func (h *wrappingHook) Fire(entry *logrus.Entry) error {
 	for key, value := range entry.Data {
 		attributes = append(attributes, slog.Any(key, value))
 	}
-	slog.LogAttrs(context.Background(), level, entry.Message, attributes...)
+	h.logger.LogAttrs(context.Background(), level, entry.Message, attributes...)
+
 	return nil
 }
 
-func New(logger *slog.Logger, bridgeInterface string, ipv4 netip.Addr, ipv6 netip.Addr, kernel, filesystem, jailerBinary, firecrackerBinary string, bridgeIPv4 netip.Addr, bridgeIPv6 netip.Addr) (*Runner, error) {
+func New(logger *slog.Logger, bridgeInterface string, ipv4 netip.Addr, ipv6 netip.Addr, kernel, filesystem, jailerBinary, firecrackerBinary string, labels []string, group string, bridgeIPv4 netip.Addr, bridgeIPv6 netip.Addr) (*Runner, error) {
 	id := generateID()
 
 	macBuffer := make([]byte, 6)
@@ -92,6 +103,8 @@ func New(logger *slog.Logger, bridgeInterface string, ipv4 netip.Addr, ipv6 neti
 
 	r := &Runner{
 		id:              id,
+		labels:          labels,
+		group:           group,
 		iface:           "tap" + id,
 		bridgeIPv4:      bridgeIPv4,
 		bridgeIPv6:      bridgeIPv6,
@@ -105,6 +118,11 @@ func New(logger *slog.Logger, bridgeInterface string, ipv4 netip.Addr, ipv6 neti
 
 		jailerBinary:      jailerBinary,
 		firecrackerBinary: firecrackerBinary,
+
+		CpuCount:   2,
+		MemorySize: 4 * 1024,
+		SMT:        false,
+		DiskSize:   10 * 1024 * 1024 * 1024,
 
 		logger: logger,
 		logrus: &logrus.Logger{
@@ -181,10 +199,36 @@ func (r *Runner) Stop(ctx context.Context) error {
 		return fmt.Errorf("failed to wait for shutdown: %w", err)
 	}
 
+	if err := r.destroyInterface(ctx); err != nil {
+		return fmt.Errorf("failed to remove network interface: %w", err)
+	}
+
 	return nil
 }
 
-func (r *Runner) Start(ctx context.Context, token string, labels []string, interactive bool) error {
+type logWriter struct {
+	l      *slog.Logger
+	buffer bytes.Buffer
+}
+
+func (lw *logWriter) Write(data []byte) (int, error) {
+	index := bytes.Index(data, []byte{'\n'})
+	if index != -1 {
+		lw.buffer.Write(data[:index])
+		lw.l.Debug(string(lw.buffer.Bytes()))
+		lw.buffer.Reset()
+		if index == len(data) {
+			return len(data), nil
+		}
+		data = data[index+1:]
+	}
+
+	lw.buffer.Write(data)
+
+	return len(data), nil
+}
+
+func (r *Runner) Start(ctx context.Context, token string) error {
 	if err := r.setupInterface(ctx); err != nil {
 		return fmt.Errorf("failed to create network interface: %w", err)
 	}
@@ -197,9 +241,11 @@ func (r *Runner) Start(ctx context.Context, token string, labels []string, inter
 		return fmt.Errorf("failed to create vm configuration: %w", err)
 	}
 
-	if interactive {
+	if r.Interactive {
 		cfg.JailerCfg.Daemonize = false
 		cfg.JailerCfg.Stdin = os.Stdin
+		cfg.JailerCfg.Stdout = os.Stdout
+		cfg.JailerCfg.Stderr = os.Stderr
 	}
 
 	m, err := firecracker.NewMachine(ctx, *cfg, firecracker.WithLogger(logrus.NewEntry(r.logrus)))
@@ -212,17 +258,22 @@ func (r *Runner) Start(ctx context.Context, token string, labels []string, inter
 
 	r.machine = m
 
-	r.logger.Info("starting runner", "ipv4", r.ipv4.String(), "ipv6", r.ipv6.String(), "id", r.id)
+	if r.bridgeIPv6.IsUnspecified() {
+		r.logger.Info("starting runner", "ipv4", r.ipv4.String(), "ipv6", "disabled", "id", r.id)
+	} else {
+		r.logger.Info("starting runner", "ipv4", r.ipv4.String(), "ipv6", r.ipv6.String(), "id", r.id)
+	}
 	if err := m.Start(ctx); err != nil {
 		r.destroyInterface(ctx)
 		return fmt.Errorf("failed to start microvm: %w", err)
 	}
 
-	metadata := map[string]interface{}{
-		"latest": map[string]interface{}{
-			"meta-data": map[string]string{
+	metadata := map[string]map[string]map[string]string{
+		"latest": {
+			"meta-data": {
 				"token":  token,
-				"labels": strings.Join(labels, ","),
+				"labels": strings.Join(r.labels, ","),
+				"group":  r.group,
 			},
 		},
 	}
@@ -261,11 +312,10 @@ func createDiskImage(ctx context.Context, path string, size int64, uid int, gid 
 }
 
 func (r *Runner) createConfig(ctx context.Context) (*firecracker.Config, error) {
-	bootArgs := fmt.Sprintf("console=ttyS0 reboot=k panic=1 pci=off init=/sbin/overlay-init -- %s %s %s %s %s", r.id, r.ipv4, r.bridgeIPv4, r.ipv6, r.bridgeIPv6)
-
-	var vcpuCount int64 = 2
-	var memSizeMib int64 = 2048
-	smt := false
+	bootArgs := fmt.Sprintf("console=ttyS0 reboot=k panic=1 pci=off init=/sbin/overlay-init -- %s %s %s", r.id, r.ipv4, r.bridgeIPv4)
+	if !r.ipv6.IsUnspecified() {
+		bootArgs = fmt.Sprintf("%s %s %s", bootArgs, r.ipv6, r.bridgeIPv6)
+	}
 
 	socketPath := "firecracker.socket"
 	rootDriveID := "root"
@@ -282,14 +332,16 @@ func (r *Runner) createConfig(ctx context.Context) (*firecracker.Config, error) 
 	uid := 123
 	gid := 100
 
+	logWriter := &logWriter{l: r.logger}
+
 	cfg := &firecracker.Config{
 		SocketPath:      socketPath,
 		KernelImagePath: r.kernel,
 		KernelArgs:      bootArgs,
 		MachineCfg: models.MachineConfiguration{
-			VcpuCount:  &vcpuCount,
-			MemSizeMib: &memSizeMib,
-			Smt:        &smt,
+			VcpuCount:  &r.CpuCount,
+			MemSizeMib: &r.MemorySize,
+			Smt:        &r.SMT,
 		},
 		Drives: []models.Drive{
 			{
@@ -308,9 +360,12 @@ func (r *Runner) createConfig(ctx context.Context) (*firecracker.Config, error) 
 			Daemonize:      true,
 			NumaNode:       firecracker.Int(0),
 			ChrootBaseDir:  "/srv/jailer",
-			ChrootStrategy: NewOverlayChrootStrategy(r.kernel),
+			ChrootStrategy: NewOverlayChrootStrategy(r),
 			ExecFile:       r.firecrackerBinary,
 			JailerBinary:   r.jailerBinary,
+			CgroupVersion:  "2",
+			Stdout:         logWriter,
+			Stderr:         logWriter,
 		},
 	}
 
@@ -332,7 +387,7 @@ const (
 	rootfsFolderName                    = "root"
 )
 
-func OverlayLinkFilesHandler(kernelImageFileName string) firecracker.Handler {
+func (s *OverlayChrootStrategy) OverlayLinkFilesHandler() firecracker.Handler {
 	return firecracker.Handler{
 		Name: OverlayLinkFilesToRootFSHandlerName,
 		Fn: func(ctx context.Context, m *firecracker.Machine) error {
@@ -351,7 +406,7 @@ func OverlayLinkFilesHandler(kernelImageFileName string) firecracker.Handler {
 			// link kernel image to root fs
 			if err := os.Link(
 				m.Cfg.KernelImagePath,
-				filepath.Join(rootfs, kernelImageFileName),
+				filepath.Join(rootfs, filepath.Base(s.runner.kernel)),
 			); err != nil {
 				return err
 			}
@@ -371,9 +426,8 @@ func OverlayLinkFilesHandler(kernelImageFileName string) firecracker.Handler {
 				m.Cfg.Drives[i].PathOnHost = firecracker.String(driveFileName)
 			}
 
-			// create overlay fs of 4gb
-			var size int64 = 1024 * 1024 * 1024 * 4
-			overlayPathOnHost, err := createDiskImage(ctx, filepath.Join(rootfs, "overlay.ext4"), size, *m.Cfg.JailerCfg.UID, *m.Cfg.JailerCfg.GID)
+			// create overlay fs of disk size
+			overlayPathOnHost, err := createDiskImage(ctx, filepath.Join(rootfs, "overlay.ext4"), s.runner.DiskSize, *m.Cfg.JailerCfg.UID, *m.Cfg.JailerCfg.GID)
 			if err != nil {
 				return err
 			}
@@ -387,7 +441,7 @@ func OverlayLinkFilesHandler(kernelImageFileName string) firecracker.Handler {
 				PathOnHost:   firecracker.String(driveFileName),
 			})
 
-			m.Cfg.KernelImagePath = kernelImageFileName
+			m.Cfg.KernelImagePath = filepath.Base(s.runner.kernel)
 
 			for _, fifoPath := range []*string{&m.Cfg.LogFifo, &m.Cfg.MetricsFifo} {
 				if fifoPath == nil || *fifoPath == "" {
@@ -417,13 +471,12 @@ func OverlayLinkFilesHandler(kernelImageFileName string) firecracker.Handler {
 }
 
 type OverlayChrootStrategy struct {
-	Rootfs          string
-	KernelImagePath string
+	runner *Runner
 }
 
-func NewOverlayChrootStrategy(kernelImagePath string) OverlayChrootStrategy {
+func NewOverlayChrootStrategy(runner *Runner) OverlayChrootStrategy {
 	return OverlayChrootStrategy{
-		KernelImagePath: kernelImagePath,
+		runner: runner,
 	}
 }
 
@@ -434,8 +487,15 @@ func (s OverlayChrootStrategy) AdaptHandlers(handlers *firecracker.Handlers) err
 
 	handlers.FcInit = handlers.FcInit.AppendAfter(
 		firecracker.CreateLogFilesHandlerName,
-		OverlayLinkFilesHandler(filepath.Base(s.KernelImagePath)),
+		s.OverlayLinkFilesHandler(),
 	)
+
+	handlers.FcInit = handlers.FcInit.Swap(firecracker.Handler{
+		Name: firecracker.SetupKernelArgsHandlerName,
+		Fn: func(ctx context.Context, m *firecracker.Machine) error {
+			return nil
+		},
+	})
 
 	return nil
 }

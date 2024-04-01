@@ -5,69 +5,85 @@ package main
 
 import (
 	"context"
-	"crypto/x509"
-	"encoding/pem"
 	"flag"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"time"
 
-	"github.com/caddyserver/certmagic"
-	"github.com/tobiaskohlbau/flint/pkg/ipam"
+	"github.com/tobiaskohlbau/flint/config"
+	"github.com/tobiaskohlbau/flint/network"
 	"github.com/tobiaskohlbau/flint/runner"
 	"github.com/tobiaskohlbau/flint/server"
+	"golang.org/x/exp/slices"
+	yaml "gopkg.in/yaml.v3"
 )
 
-func execute(logger *slog.Logger) error {
-	jailerBinary := flag.String("jailer", "", "path to jailer binary")
-	firecrackerBinary := flag.String("firecracker", "", "path to firecracker binary")
-	kernelImage := flag.String("kernel", "", "linux kernel image (vmlinux)")
-	filesystem := flag.String("filesystem", "", "root filesystem")
-	ipv4Pool := flag.String("ipv4Pool", "10.0.0.0/24", "ipv4 address pool to use for vms")
-	ipv6Pool := flag.String("ipv6Pool", "fd3b:5cee:6e4c:2a55::/64", "ipv6 address pool to use for vms")
-	githubAppID := flag.String("appID", "", "app id of the github app")
-	githubAppPrivateKey := flag.String("privateKey", "", "private key of registered github app")
-	githubWebhookSecret := flag.String("webhookSecret", "", "github webhook secret")
-	githubOrganization := flag.String("organization", "", "github organization")
-	bridgeInterface := flag.String("bridge", "br-flint", "bridge interface name")
-	interactive := flag.Bool("interactive", false, "interactive vm without webhook")
-	address := flag.String("address", ":9198", "address to listen on")
-	labels := flag.String("labels", "", "labels to work on")
-	email := flag.String("email", "", "E-Mail for the HTTPs certificate")
+func execute(logger *slog.Logger, logLevel *slog.LevelVar) error {
+	interactive := flag.String("interactive", "", "interactive vm without webhook from group selected")
+	logLevelFlag := flag.String("logLevel", "", "Enable debug logging")
+	configPath := flag.String("config", "config.yaml", "Configuration file to load.")
 	flag.Parse()
 
-	ipamV4, err := ipam.New(*ipv4Pool)
+	configData, err := os.ReadFile(*configPath)
 	if err != nil {
-		return fmt.Errorf("failed to initialize ipam for ipv4: %w", err)
+		return fmt.Errorf("failed to load configuration file: %w", err)
 	}
 
-	ipamV6, err := ipam.New(*ipv6Pool)
+	var cfg config.Config
+	err = yaml.Unmarshal(configData, &cfg)
 	if err != nil {
-		return fmt.Errorf("failed to initialize ipam for ipv6: %w", err)
+		return fmt.Errorf("invalid config file: %w", err)
 	}
 
-	// reserve first ip for the host
-	_ = ipamV6.Allocate()
+	if cfg.LogLevel == "" && *logLevelFlag != "" {
+		cfg.LogLevel = *logLevelFlag
+	}
 
-	bridgeIPv4 := ipamV4.Allocate()
-	bridgeIPv6 := ipamV6.Allocate()
+	switch strings.ToLower(cfg.LogLevel) {
+	case "debug":
+		logLevel.Set(slog.LevelDebug)
+	case "info":
+		logLevel.Set(slog.LevelInfo)
+	case "warn":
+		logLevel.Set(slog.LevelWarn)
+	case "error":
+		logLevel.Set(slog.LevelError)
+	default:
+		logger.Error("invalid log level", "level", cfg.LogLevel)
+		os.Exit(-1)
+	}
 
-	if *interactive {
-		runner, err := runner.New(logger, *bridgeInterface, ipamV4.Allocate(), ipamV6.Allocate(), *kernelImage, *filesystem, *jailerBinary, *firecrackerBinary, bridgeIPv4, bridgeIPv6)
+	networks := make(map[string]*network.Network, 0)
+	for _, net := range cfg.Networks {
+		networks[net.Name] = network.New(net.Name, net.IPV4, net.IPV6)
+	}
+
+	if *interactive != "" {
+		index := slices.IndexFunc(cfg.Runners, func(runnerConfig config.RunnerConfig) bool {
+			return runnerConfig.Name == *interactive
+		})
+		if index == -1 {
+			return fmt.Errorf("could not find runner with name %s", *interactive)
+		}
+		runnerConfig := cfg.Runners[index]
+		net := networks[runnerConfig.Network]
+		ipv4 := net.Allocate(network.IPv4)
+		ipv6 := net.Allocate(network.IPv6)
+		runner, err := runner.New(logger, net.Name, ipv4, ipv6, runnerConfig.Kernel, runnerConfig.Filesystem, runnerConfig.Jailer, runnerConfig.Firecracker, runnerConfig.Labels, runnerConfig.Group, net.Address(network.IPv4), net.Address(network.IPv6))
 		if err != nil {
 			return fmt.Errorf("failed to create runner interactive: %w", err)
 		}
+		runner.Interactive = true
 
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer stop()
 
 		go func() {
-			err = runner.Start(ctx, "", []string{}, *interactive)
+			err = runner.Start(ctx, "")
 			if err != nil {
 				logger.Error("failed to start interactive runner", "error", err)
 				stop()
@@ -86,18 +102,10 @@ func execute(logger *slog.Logger) error {
 		return nil
 	}
 
-	data, err := os.ReadFile(*githubAppPrivateKey)
+	server, err := server.New(logger, cfg.GitHub, cfg.Runners, networks)
 	if err != nil {
-		return fmt.Errorf("failed to read github app private key file: %w", err)
+		return fmt.Errorf("failed to create server: %w", err)
 	}
-	block, _ := pem.Decode(data)
-	appKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
-	if err != nil {
-		return fmt.Errorf("failed to parse github app client key: %w", err)
-	}
-
-	splittedLabels := strings.Split(*labels, ",")
-	server := server.New(logger, ipamV4, ipamV6, appKey, *githubAppID, *filesystem, *kernelImage, *jailerBinary, *firecrackerBinary, *bridgeInterface, *githubWebhookSecret, *githubOrganization, bridgeIPv4, bridgeIPv6, splittedLabels)
 
 	go func() {
 		logger.Error("failed to run controller", "error", server.Controller(context.Background()))
@@ -108,26 +116,7 @@ func execute(logger *slog.Logger) error {
 	defer stop()
 
 	go func() {
-		var err error
-
-		host, port, err := net.SplitHostPort(*address)
-		if err != nil {
-			logger.Error("could not split host port", "error", err)
-			os.Exit(-1)
-		}
-
-		if *email == "" && host != "" && port == "443" {
-			logger.Error("could not activate HTTPS without email")
-			os.Exit(-1)
-		}
-
-		if host != "" && port == "443" {
-			certmagic.DefaultACME.Email = *email
-			err = certmagic.HTTPS([]string{host}, server)
-		} else {
-			err = http.ListenAndServe(*address, server)
-		}
-
+		err := http.ListenAndServe(cfg.Address, server)
 		if err != nil {
 			logger.Error("failed to listen", "error", err)
 			os.Exit(-1)
@@ -147,9 +136,14 @@ func execute(logger *slog.Logger) error {
 }
 
 func main() {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	lvl := new(slog.LevelVar)
+	lvl.Set(slog.LevelInfo)
 
-	if err := execute(logger); err != nil {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: lvl,
+	}))
+
+	if err := execute(logger, lvl); err != nil {
 		logger.Error("failed to execute", "error", err)
 		os.Exit(-1)
 	}
