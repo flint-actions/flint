@@ -1,4 +1,4 @@
-module github.com/tobiaskohlbau/flint
+module github.com/flint-actions/flint
 
 go 1.21
 
