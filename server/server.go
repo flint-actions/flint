@@ -114,7 +114,7 @@ func (s *Server) handleQueuedEvent(ctx context.Context, job *github.WorkflowJob)
 
 	cfg, ok := shouldHandleEvent(job, s.runnerConfigs)
 	if !ok {
-		s.logger.Debug("not resposible for job", "job_id", job.GetID())
+		s.logger.Debug("not responsible for job", "job_id", job.GetID())
 		return nil
 	}
 
