@@ -4,12 +4,13 @@
 package config
 
 type Config struct {
-	LogLevel string          `yaml:"logLevel"`
-	Runners  []RunnerConfig  `yaml:"runners"`
-	Address  string          `yaml:"address"`
-	Email    string          `yaml:"email"`
-	GitHub   GitHubConfig    `yaml:"github"`
-	Networks []NetworkConfig `yaml:"networks"`
+	LogLevel      string          `yaml:"logLevel"`
+	Runners       []RunnerConfig  `yaml:"runners"`
+	StaticRunners []RunnerConfig  `yaml:"static_runners"`
+	Address       string          `yaml:"address"`
+	Email         string          `yaml:"email"`
+	GitHub        GitHubConfig    `yaml:"github"`
+	Networks      []NetworkConfig `yaml:"networks"`
 }
 
 type RunnerConfig struct {

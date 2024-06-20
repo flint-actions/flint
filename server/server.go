@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"math/rand"
 	"net/http"
 	"strings"
 	"sync"
@@ -124,7 +125,7 @@ func (s *Server) handleQueuedEvent(ctx context.Context, owner string, repo strin
 	ipv4 := net.Allocate(network.IPv4)
 	ipv6 := net.Allocate(network.IPv6)
 
-	runner, err := runner.New(s.logger, net.Name, ipv4, ipv6, cfg.Kernel, cfg.Filesystem, cfg.Jailer, cfg.Firecracker, s.organization, cfg.Labels, cfg.Group, net.Address(network.IPv4), net.Address(network.IPv6))
+	runner, err := runner.New(s.logger, generateID(), net.Name, ipv4, ipv6, cfg.Kernel, cfg.Filesystem, cfg.Jailer, cfg.Firecracker, s.organization, cfg.Labels, cfg.Group, net.Address(network.IPv4), net.Address(network.IPv6), true)
 	if err != nil {
 		return fmt.Errorf("failed to create runner: %w", err)
 	}
@@ -369,4 +370,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890"
+
+func generateID() string {
+	b := make([]byte, 12)
+	for i := range b {
+		b[i] = letters[rand.Intn(len(letters))]
+	}
+	return string(b)
 }

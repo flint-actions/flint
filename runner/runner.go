@@ -6,6 +6,7 @@ package runner
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -27,6 +28,7 @@ type Runner struct {
 	labels          []string
 	organization    string
 	group           string
+	ephemeral       bool
 	machine         *firecracker.Machine
 	iface           string
 	bridgeIPv4      netip.Addr
@@ -51,6 +53,7 @@ type Runner struct {
 	DiskSize   int64
 
 	Interactive bool
+	exitCh      chan error
 }
 
 type wrappingHook struct {
@@ -89,9 +92,7 @@ func (h *wrappingHook) Fire(entry *logrus.Entry) error {
 	return nil
 }
 
-func New(logger *slog.Logger, bridgeInterface string, ipv4 netip.Addr, ipv6 netip.Addr, kernel, filesystem, jailerBinary, firecrackerBinary string, organization string, labels []string, group string, bridgeIPv4 netip.Addr, bridgeIPv6 netip.Addr) (*Runner, error) {
-	id := generateID()
-
+func New(logger *slog.Logger, id string, bridgeInterface string, ipv4 netip.Addr, ipv6 netip.Addr, kernel, filesystem, jailerBinary, firecrackerBinary string, organization string, labels []string, group string, bridgeIPv4 netip.Addr, bridgeIPv6 netip.Addr, ephemeral bool) (*Runner, error) {
 	macBuffer := make([]byte, 6)
 	_, err := rand.Read(macBuffer)
 	if err != nil {
@@ -114,6 +115,7 @@ func New(logger *slog.Logger, bridgeInterface string, ipv4 netip.Addr, ipv6 neti
 		ipv6:            ipv6,
 		bridgeInterface: bridgeInterface,
 		mac:             macAddress,
+		ephemeral:       ephemeral,
 
 		kernel:     kernel,
 		filesystem: filesystem,
@@ -135,6 +137,7 @@ func New(logger *slog.Logger, bridgeInterface string, ipv4 netip.Addr, ipv6 neti
 			ExitFunc:     os.Exit,
 			ReportCaller: false,
 		},
+		exitCh: make(chan error),
 	}
 	r.logrus.Hooks.Add(&wrappingHook{logger: logger})
 	return r, nil
@@ -184,21 +187,19 @@ func (r *Runner) destroyInterface(ctx context.Context) error {
 	return nil
 }
 
-func (r *Runner) Stop(ctx context.Context) error {
-	defer func() {
-		os.RemoveAll(filepath.Join("/srv/jailer/firecracker", r.id))
-	}()
-
-	if r.machine == nil {
-		return nil
-	}
-
-	if err := r.machine.Shutdown(ctx); err != nil {
-		return fmt.Errorf("failed to shutdown microvm: %w", err)
-	}
-
-	if err := r.machine.Wait(ctx); err != nil {
-		return fmt.Errorf("failed to wait for shutdown: %w", err)
+func (r *Runner) cleanup(ctx context.Context) error {
+	r.logger.Debug("cleaning up vm resources")
+	path := filepath.Join("/srv/jailer/firecracker", r.id)
+	if r.ephemeral {
+		os.RemoveAll(path)
+	} else {
+		path = filepath.Join(path, "root")
+		os.Remove(filepath.Join(path, "firecracker.socket"))
+		os.Remove(filepath.Join(path, "firecracker"))
+		os.Remove(filepath.Join(path, filepath.Base(r.kernel)))
+		os.Remove(filepath.Join(path, filepath.Base(r.filesystem)))
+		os.RemoveAll(filepath.Join(path, "run"))
+		os.RemoveAll(filepath.Join(path, "dev"))
 	}
 
 	if err := r.destroyInterface(ctx); err != nil {
@@ -206,6 +207,28 @@ func (r *Runner) Stop(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (r *Runner) Stop(ctx context.Context) error {
+	if r.machine == nil {
+		return fmt.Errorf("could not stop runner not started")
+	}
+
+	if err := r.machine.Shutdown(ctx); err != nil {
+		return fmt.Errorf("failed to shutdown runner: %w", err)
+	}
+
+	return nil
+}
+
+func (r *Runner) Wait(ctx context.Context) error {
+	if r.machine == nil {
+		return fmt.Errorf("could not wait runner not started")
+	}
+	if err := r.machine.Wait(ctx); err != nil {
+		return fmt.Errorf("failed to wait runner: %w", err)
+	}
+	return <-r.exitCh
 }
 
 type logWriter struct {
@@ -232,6 +255,9 @@ func (lw *logWriter) Write(data []byte) (int, error) {
 
 func (r *Runner) Start(ctx context.Context, token string) error {
 	if err := r.setupInterface(ctx); err != nil {
+		if err := r.destroyInterface(ctx); err != nil {
+			return fmt.Errorf("failed to destroy interface: %w", err)
+		}
 		return fmt.Errorf("failed to create network interface: %w", err)
 	}
 
@@ -244,7 +270,6 @@ func (r *Runner) Start(ctx context.Context, token string) error {
 	}
 
 	if r.Interactive {
-		cfg.JailerCfg.Daemonize = false
 		cfg.JailerCfg.Stdin = os.Stdin
 		cfg.JailerCfg.Stdout = os.Stdout
 		cfg.JailerCfg.Stderr = os.Stderr
@@ -267,8 +292,17 @@ func (r *Runner) Start(ctx context.Context, token string) error {
 		r.logger.Info("starting runner", "ipv4", r.ipv4.String(), "ipv6", r.ipv6.String(), "id", r.id)
 	}
 	if err := m.Start(ctx); err != nil {
-		r.destroyInterface(ctx)
+		r.cleanup(ctx)
 		return fmt.Errorf("failed to start microvm: %w", err)
+	}
+
+	if r.Interactive {
+		go func() {
+			if err := m.Wait(context.Background()); err != nil {
+				r.logger.Error("failed to wait for shutdown")
+			}
+			r.exitCh <- r.cleanup(context.Background())
+		}()
 	}
 
 	metadata := map[string]map[string]map[string]string{
@@ -278,6 +312,7 @@ func (r *Runner) Start(ctx context.Context, token string) error {
 				"token":        token,
 				"labels":       strings.Join(r.labels, ","),
 				"group":        r.group,
+				"ephemeral":    fmt.Sprintf("%t", r.ephemeral),
 			},
 		},
 	}
@@ -292,27 +327,28 @@ func (r *Runner) Start(ctx context.Context, token string) error {
 	return nil
 }
 
-func createDiskImage(ctx context.Context, path string, size int64, uid int, gid int) (string, error) {
+func createDiskImage(ctx context.Context, path string, size int64, uid int, gid int) error {
 	f, err := os.Create(path)
 	if err != nil {
-		return "", fmt.Errorf("failed to create disk image: %w", err)
+		return fmt.Errorf("failed to create disk image: %w", err)
 	}
+	defer f.Close()
 
 	if err := os.Chown(path, uid, gid); err != nil {
-		return "", fmt.Errorf("failed to chown overlay fs: %w", err)
+		return fmt.Errorf("failed to chown overlay fs: %w", err)
 	}
 
 	err = f.Truncate(size)
 	if err != nil {
-		return "", fmt.Errorf("failed to truncate disk image: %w", err)
+		return fmt.Errorf("failed to truncate disk image: %w", err)
 	}
 
 	out, err := exec.CommandContext(ctx, "mkfs.ext4", "-F", f.Name()).CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("failed to execute mkfs.ext4: %s: %w", out, err)
+		return fmt.Errorf("failed to execute mkfs.ext4: %s: %w", out, err)
 	}
 
-	return f.Name(), err
+	return err
 }
 
 func (r *Runner) createConfig(ctx context.Context) (*firecracker.Config, error) {
@@ -362,7 +398,7 @@ func (r *Runner) createConfig(ctx context.Context) (*firecracker.Config, error) 
 			UID:            &uid,
 			GID:            &gid,
 			ID:             r.id,
-			Daemonize:      true,
+			Daemonize:      false,
 			NumaNode:       firecracker.Int(0),
 			ChrootBaseDir:  "/srv/jailer",
 			ChrootStrategy: NewOverlayChrootStrategy(r),
@@ -375,16 +411,6 @@ func (r *Runner) createConfig(ctx context.Context) (*firecracker.Config, error) 
 	}
 
 	return cfg, nil
-}
-
-const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890"
-
-func generateID() string {
-	b := make([]byte, 12)
-	for i := range b {
-		b[i] = letters[rand.Intn(len(letters))]
-	}
-	return string(b)
 }
 
 const (
@@ -409,44 +435,51 @@ func (s *OverlayChrootStrategy) OverlayLinkFilesHandler() firecracker.Handler {
 			)
 
 			// link kernel image to root fs
+			kernelImageName := filepath.Base(m.Cfg.KernelImagePath)
+			kernelPathOnHost := filepath.Join(rootfs, kernelImageName)
 			if err := os.Link(
 				m.Cfg.KernelImagePath,
-				filepath.Join(rootfs, filepath.Base(s.runner.kernel)),
+				kernelPathOnHost,
 			); err != nil {
 				return err
 			}
+			m.Cfg.KernelImagePath = kernelImageName
 
-			// copy all drives to the root fs
+			// link all drives to the root fs
 			for i, drive := range m.Cfg.Drives {
-				hostPath := firecracker.StringValue(drive.PathOnHost)
-				driveFileName := filepath.Base(hostPath)
+				sourceFilesystemPath := firecracker.StringValue(drive.PathOnHost)
+				driveFilename := filepath.Base(sourceFilesystemPath)
 
+				drivePath := filepath.Join(rootfs, driveFilename)
 				if err := os.Link(
-					hostPath,
-					filepath.Join(rootfs, driveFileName),
+					sourceFilesystemPath,
+					drivePath,
 				); err != nil {
 					return err
 				}
 
-				m.Cfg.Drives[i].PathOnHost = firecracker.String(driveFileName)
+				m.Cfg.Drives[i].PathOnHost = firecracker.String(driveFilename)
 			}
 
-			// create overlay fs of disk size
-			overlayPathOnHost, err := createDiskImage(ctx, filepath.Join(rootfs, "overlay.ext4"), s.runner.DiskSize, *m.Cfg.JailerCfg.UID, *m.Cfg.JailerCfg.GID)
-			if err != nil {
-				return err
+			// create or reuse overlay fs of disk size
+			overlayDriveFilename := "overlay.ext4"
+			overlayPathOnHost := filepath.Join(rootfs, overlayDriveFilename)
+			if _, err := os.Stat(overlayPathOnHost); errors.Is(err, os.ErrNotExist) {
+				err := createDiskImage(ctx, overlayPathOnHost, s.runner.DiskSize, *m.Cfg.JailerCfg.UID, *m.Cfg.JailerCfg.GID)
+				if err != nil {
+					return err
+				}
 			}
 
 			// add additional drive for overlay fs
-			driveFileName := filepath.Base(overlayPathOnHost)
 			m.Cfg.Drives = append(m.Cfg.Drives, models.Drive{
 				DriveID:      firecracker.String("overlay"),
 				IsRootDevice: firecracker.Bool(false),
 				IsReadOnly:   firecracker.Bool(false),
-				PathOnHost:   firecracker.String(driveFileName),
+				PathOnHost:   firecracker.String(overlayDriveFilename),
 			})
 
-			m.Cfg.KernelImagePath = filepath.Base(s.runner.kernel)
+			fmt.Printf("%s", m.Cfg)
 
 			for _, fifoPath := range []*string{&m.Cfg.LogFifo, &m.Cfg.MetricsFifo} {
 				if fifoPath == nil || *fifoPath == "" {

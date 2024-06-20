@@ -20,6 +20,15 @@ RESOURCE_POINTER_OBJ=latest/meta-data/group
 GITHUB_RUNNER_GROUP=$(curl -s "http://${MMDS_IPV4_ADDR}/${RESOURCE_POINTER_OBJ}" \
 	-H "X-metadata-token: ${TOKEN}")
 
+RESOURCE_POINTER_OBJ=latest/meta-data/ephemeral
+GITHUB_RUNNER_EPHEMERAL=$(curl -s "http://${MMDS_IPV4_ADDR}/${RESOURCE_POINTER_OBJ}" \
+	-H "X-metadata-token: ${TOKEN}")
+
 cd /home/runner/actions-runner || exit 1
-./config.sh --url "https://github.com/$GITHUB_RUNNER_ORGANIZATION" --token "$GITHUB_RUNNER_TOKEN" --ephemeral --unattended --name "$(hostname)" --labels "$GITHUB_RUNNER_LABELS" --runnergroup "$GITHUB_RUNNER_GROUP"
+if [[ "${GITHUB_RUNNER_EPHEMERAL}" == "true" ]]; then
+	./config.sh --url "https://github.com/$GITHUB_RUNNER_ORGANIZATION" --token "$GITHUB_RUNNER_TOKEN" --ephemeral --unattended --name "$(hostname)" --labels "$GITHUB_RUNNER_LABELS" --runnergroup "$GITHUB_RUNNER_GROUP"
+elif [[ "${GITHUB_RUNNER_EPHEMERAL}" == "false" && ! -f runner_configured ]]; then
+	./config.sh --url "https://github.com/$GITHUB_RUNNER_ORGANIZATION" --token "$GITHUB_RUNNER_TOKEN" --unattended --name "$(hostname)" --labels "$GITHUB_RUNNER_LABELS" --runnergroup "$GITHUB_RUNNER_GROUP"
+	touch runner_configured
+fi
 ./run.sh
