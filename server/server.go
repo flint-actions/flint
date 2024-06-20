@@ -106,7 +106,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-func (s *Server) handleQueuedEvent(ctx context.Context, job *github.WorkflowJob) error {
+func (s *Server) handleQueuedEvent(ctx context.Context, owner string, repo string, job *github.WorkflowJob) error {
 	if s.hasProcessedJob(job.GetID()) {
 		s.logger.Info("queued event for job already handled", "job_id", job.GetID())
 		return nil
@@ -129,6 +129,21 @@ func (s *Server) handleQueuedEvent(ctx context.Context, job *github.WorkflowJob)
 		return fmt.Errorf("failed to create runner: %w", err)
 	}
 
+	installationClient, err := s.newInstallationGitHubClient(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to create installation client: %w", err)
+	}
+
+	job, _, err = installationClient.Actions.GetWorkflowJobByID(context.TODO(), owner, repo, *job.ID)
+	if err != nil {
+		return fmt.Errorf("failed to retrieve job: %w", err)
+	}
+
+	if status := job.GetStatus(); status != "queued" {
+		s.logger.Debug("ignoring event which was queued but now job state is different", "state", status)
+		return nil
+	}
+
 	if cfg.CpuCount != 0 {
 		runner.CpuCount = int64(cfg.CpuCount)
 	}
@@ -146,11 +161,6 @@ func (s *Server) handleQueuedEvent(ctx context.Context, job *github.WorkflowJob)
 	}
 
 	log.Printf("spawning selfhosted runner: %s", runner.ID())
-
-	installationClient, err := s.newInstallationGitHubClient(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to create installation client: %w", err)
-	}
 
 	registrationToken, _, err := installationClient.Actions.CreateOrganizationRegistrationToken(ctx, s.organization)
 	if err != nil {
@@ -307,7 +317,7 @@ func (s *Server) Controller(ctx context.Context) error {
 							continue
 						}
 
-						if err := s.handleQueuedEvent(ctx, job); err != nil {
+						if err := s.handleQueuedEvent(ctx, owner, name, job); err != nil {
 							log.Println(err)
 						}
 					}
@@ -347,7 +357,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch event := event.(type) {
 	case *github.WorkflowJobEvent:
 		if event.GetAction() == "queued" {
-			if err := s.handleQueuedEvent(r.Context(), event.GetWorkflowJob()); err != nil {
+			if err := s.handleQueuedEvent(r.Context(), event.GetOrg().GetLogin(), event.GetRepo().GetName(), event.GetWorkflowJob()); err != nil {
 				s.logger.Error("failed to handle queued event", "error", err)
 				http.Error(w, "internal server error", http.StatusInternalServerError)
 			}
