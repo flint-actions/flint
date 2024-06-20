@@ -260,7 +260,8 @@ func (r *Runner) Start(ctx context.Context, token string) error {
 
 	r.machine = m
 
-	if r.bridgeIPv6.IsUnspecified() {
+	zeroAddr := netip.Addr{}
+	if r.bridgeIPv6 == zeroAddr {
 		r.logger.Info("starting runner", "ipv4", r.ipv4.String(), "ipv6", "disabled", "id", r.id)
 	} else {
 		r.logger.Info("starting runner", "ipv4", r.ipv4.String(), "ipv6", r.ipv6.String(), "id", r.id)
@@ -316,7 +317,8 @@ func createDiskImage(ctx context.Context, path string, size int64, uid int, gid 
 
 func (r *Runner) createConfig(ctx context.Context) (*firecracker.Config, error) {
 	bootArgs := fmt.Sprintf("console=ttyS0 reboot=k panic=1 pci=off init=/sbin/overlay-init -- %s %s %s", r.id, r.ipv4, r.bridgeIPv4)
-	if !r.ipv6.IsUnspecified() {
+	zeroAddr := netip.Addr{}
+	if r.ipv6 == zeroAddr {
 		bootArgs = fmt.Sprintf("%s %s %s", bootArgs, r.ipv6, r.bridgeIPv6)
 	}
 
