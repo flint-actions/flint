@@ -226,18 +226,24 @@ func (s *Server) newInstallationGitHubClient(ctx context.Context) (*github.Clien
 	return github.NewTokenClient(ctx, installationToken.GetToken()), nil
 }
 
+func unifyLabels(labels []string) []string {
+	out := make([]string, len(labels))
+	for i, label := range labels {
+		out[i] = strings.ToLower(label)
+	}
+	slices.Sort(out)
+	return out
+}
+
 func shouldHandleEvent(job *github.WorkflowJob, runners []config.RunnerConfig) (config.RunnerConfig, bool) {
 	if !slices.Contains(job.Labels, "self-hosted") {
 		return config.RunnerConfig{}, false
 	}
 
-	slices.Sort(job.Labels)
+	jobLabels := unifyLabels(job.Labels)
 	for _, runner := range runners {
-		if len(runner.Labels) != len(job.Labels) {
-			continue
-		}
-
-		if slices.Equal(runner.Labels, job.Labels) {
+		runnerLabels := unifyLabels(runner.Labels)
+		if slices.Equal(runnerLabels, jobLabels) {
 			return runner, true
 		}
 	}
