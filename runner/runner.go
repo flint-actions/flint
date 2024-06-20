@@ -479,8 +479,6 @@ func (s *OverlayChrootStrategy) OverlayLinkFilesHandler() firecracker.Handler {
 				PathOnHost:   firecracker.String(overlayDriveFilename),
 			})
 
-			fmt.Printf("%s", m.Cfg)
-
 			for _, fifoPath := range []*string{&m.Cfg.LogFifo, &m.Cfg.MetricsFifo} {
 				if fifoPath == nil || *fifoPath == "" {
 					continue
