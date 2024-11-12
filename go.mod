@@ -5,7 +5,7 @@ go 1.21
 require (
 	github.com/caddyserver/certmagic v0.20.0
 	github.com/firecracker-microvm/firecracker-go-sdk v1.0.0
-	github.com/golang-jwt/jwt/v4 v4.5.0
+	github.com/golang-jwt/jwt/v4 v4.5.1
 	github.com/google/go-github/v50 v50.1.0
 	github.com/sirupsen/logrus v1.8.1
 	golang.org/x/exp v0.0.0-20240222234643-814bf88cf225
